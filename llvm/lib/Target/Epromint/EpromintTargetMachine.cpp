@@ -1,2 +1,2 @@
 #include "llvm/Support/Compiler.h"
-extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeEpromintTarge) {}
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeEpromintTargeMachine() {}

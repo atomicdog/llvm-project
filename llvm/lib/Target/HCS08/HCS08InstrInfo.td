@@ -416,7 +416,8 @@ def : Pat<(i16 (HCS08Wrapper tglobaladdr:$addr)), (LDHXi tglobaladdr:$addr)>;
 // memory (extended) operand, and set the condition codes.
 //===----------------------------------------------------------------------===//
 
-multiclass ALU8<bits<8> immop, bits<8> extop, string m, SDNode op> {
+multiclass ALU8<bits<8> immop, bits<8> extop, bits<8> spop, string m,
+                SDNode op> {
   let Constraints = "$src = $dst", isCodeGenOnly = 1, hasSideEffects = 0,
       Defs = [CCR] in {
     def i : F16<immop, AddrModeImm, (outs GR8:$dst), (ins GR8:$src, imm8:$b0),
@@ -426,14 +427,25 @@ multiclass ALU8<bits<8> immop, bits<8> extop, string m, SDNode op> {
                   [(set GR8:$dst,
                         (op GR8:$src,
                             (load (HCS08Wrapper tglobaladdr:$w0))))]>;
+    // Stack-relative form; the fold target for the reg-reg pseudo below.
+    let mayLoad = 1 in
+    def sp : F24P<spop, AddrModeSp1, (outs GR8:$dst),
+                  (ins GR8:$src, GR16:$base, imm8:$b0), m # "\t$b0,sp", []>;
+    // Reg-reg pseudo. HCS08 has no reg-reg ALU, so this is always folded to
+    // the stack form by foldMemoryOperandImpl once the second source is
+    // spilled (which it must be, since A is the only 8-bit register).
+    let isPseudo = 1 in
+    def rr : HCS08Inst<0, AddrModeNone, (outs GR8:$dst),
+                       (ins GR8:$src, GR8:$src2), "",
+                       [(set GR8:$dst, (op GR8:$src, GR8:$src2))]>;
   }
 }
 
-defm ADD8 : ALU8<0xAB, 0xCB, "add", add>;
-defm SUB8 : ALU8<0xA0, 0xC0, "sub", sub>;
-defm AND8 : ALU8<0xA4, 0xC4, "and", and>;
-defm ORA8 : ALU8<0xAA, 0xCA, "ora", or>;
-defm EOR8 : ALU8<0xA8, 0xC8, "eor", xor>;
+defm ADD8 : ALU8<0xAB, 0xCB, 0xEB, "add", add>;
+defm SUB8 : ALU8<0xA0, 0xC0, 0xE0, "sub", sub>;
+defm AND8 : ALU8<0xA4, 0xC4, 0xE4, "and", and>;
+defm ORA8 : ALU8<0xAA, 0xCA, 0xEA, "ora", or>;
+defm EOR8 : ALU8<0xA8, 0xC8, 0xE8, "eor", xor>;
 
 //===----------------------------------------------------------------------===//
 // Compares and conditional branches (code generation).

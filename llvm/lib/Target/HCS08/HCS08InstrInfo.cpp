@@ -72,6 +72,36 @@ void HCS08InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   BuildMI(MBB, MI, DL, get(Opc), DestReg).addFrameIndex(FrameIndex).addImm(0);
 }
 
+MachineInstr *HCS08InstrInfo::foldMemoryOperandImpl(
+    MachineFunction &MF, MachineInstr &MI, ArrayRef<unsigned> Ops,
+    int FrameIndex, MachineInstr *&CopyMI, LiveIntervals *LIS,
+    VirtRegMap *VRM) const {
+  // Fold the second source of a reg-reg ALU pseudo (operand 2) into the
+  // stack-relative form that reads it from the spill slot. The tied first
+  // source stays in A.
+  if (Ops.size() != 1 || Ops[0] != 2)
+    return nullptr;
+
+  unsigned SpOpc;
+  switch (MI.getOpcode()) {
+  case HCS08::ADD8rr: SpOpc = HCS08::ADD8sp; break;
+  case HCS08::SUB8rr: SpOpc = HCS08::SUB8sp; break;
+  case HCS08::AND8rr: SpOpc = HCS08::AND8sp; break;
+  case HCS08::ORA8rr: SpOpc = HCS08::ORA8sp; break;
+  case HCS08::EOR8rr: SpOpc = HCS08::EOR8sp; break;
+  default:
+    return nullptr;
+  }
+
+  MachineBasicBlock::iterator InsertPt = MI;
+  return BuildMI(*MI.getParent(), InsertPt, MI.getDebugLoc(), get(SpOpc))
+      .add(MI.getOperand(0)) // dst
+      .add(MI.getOperand(1)) // tied src (A)
+      .addFrameIndex(FrameIndex)
+      .addImm(0)
+      .getInstr();
+}
+
 static bool isCondBranchOpc(unsigned Opc) {
   switch (Opc) {
   case HCS08::BEQcc:

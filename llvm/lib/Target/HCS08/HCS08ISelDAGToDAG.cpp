@@ -36,6 +36,8 @@ private:
 #include "HCS08GenDAGISel.inc"
 
   void Select(SDNode *N) override;
+
+  bool SelectStackAddr(SDValue Addr, SDValue &Base, SDValue &Disp);
 };
 
 class HCS08DAGToDAGISelLegacy : public SelectionDAGISelLegacy {
@@ -55,6 +57,33 @@ INITIALIZE_PASS(HCS08DAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
 FunctionPass *llvm::createHCS08ISelDag(HCS08TargetMachine &TM,
                                        CodeGenOptLevel OptLevel) {
   return new HCS08DAGToDAGISelLegacy(TM, OptLevel);
+}
+
+// Match a frame-index address, optionally displaced by a constant, into the
+// (base, displacement) pair the n,sp addressing mode takes. The frame index
+// stays in the base operand until eliminateFrameIndex turns the pair into a
+// single SP-relative displacement, so the constant here only has to fit
+// alongside it; the range check on the sum happens there.
+bool HCS08DAGToDAGISel::SelectStackAddr(SDValue Addr, SDValue &Base,
+                                        SDValue &Disp) {
+  SDLoc dl(Addr);
+  int64_t Off = 0;
+
+  if (Addr.getOpcode() == ISD::ADD) {
+    auto *C = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+    if (!C)
+      return false;
+    Off = C->getSExtValue();
+    Addr = Addr.getOperand(0);
+  }
+
+  auto *FIN = dyn_cast<FrameIndexSDNode>(Addr);
+  if (!FIN || !isUInt<8>(Off))
+    return false;
+
+  Base = CurDAG->getTargetFrameIndex(FIN->getIndex(), MVT::i16);
+  Disp = CurDAG->getTargetConstant(Off, dl, MVT::i8);
+  return true;
 }
 
 void HCS08DAGToDAGISel::Select(SDNode *Node) {

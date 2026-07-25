@@ -51,6 +51,10 @@ class HCS08MCCodeEmitter : public MCCodeEmitter {
                            SmallVectorImpl<MCFixup> &Fixups,
                            const MCSubtargetInfo &STI) const;
 
+  unsigned getSPMemOpValue(const MCInst &MI, unsigned Op,
+                           SmallVectorImpl<MCFixup> &Fixups,
+                           const MCSubtargetInfo &STI) const;
+
   unsigned getPCRel8OpValue(const MCInst &MI, unsigned Op,
                             SmallVectorImpl<MCFixup> &Fixups,
                             const MCSubtargetInfo &STI) const;
@@ -133,6 +137,19 @@ unsigned HCS08MCCodeEmitter::getImm8OpValue(const MCInst &MI, unsigned Op,
 
   Fixups.push_back(MCFixup::create(getFixupOffset(MI, Op, 8), Expr, Kind));
   return 0;
+}
+
+/// Encode an n,sp operand. The operand pair is (base, displacement); the base
+/// is SP, which the addressing mode implies, so only the displacement is
+/// encoded. Frame offsets are always resolved to constants by the time they
+/// get here.
+unsigned
+HCS08MCCodeEmitter::getSPMemOpValue(const MCInst &MI, unsigned Op,
+                                     SmallVectorImpl<MCFixup> &Fixups,
+                                     const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(Op + 1);
+  assert(MO.isImm() && "expected a resolved stack displacement");
+  return MO.getImm() & 0xFF;
 }
 
 unsigned

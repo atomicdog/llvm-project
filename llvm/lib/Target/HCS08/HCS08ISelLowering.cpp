@@ -11,6 +11,7 @@
 #include "HCS08SelectionDAGInfo.h"
 #include "HCS08Subtarget.h"
 #include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -137,21 +138,34 @@ SDValue HCS08TargetLowering::LowerFormalArguments(
 
   MachineFunction &MF = DAG.getMachineFunction();
   MachineRegisterInfo &RegInfo = MF.getRegInfo();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
 
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
   CCInfo.AnalyzeFormalArguments(Ins, CC_HCS08);
 
   for (CCValAssign &VA : ArgLocs) {
-    if (!VA.isRegLoc())
-      report_fatal_error("HCS08 stack arguments not yet implemented");
+    MVT LocVT = VA.getLocVT();
+    SDValue Val;
 
-    MVT RegVT = VA.getLocVT();
-    const TargetRegisterClass *RC =
-        RegVT == MVT::i16 ? &HCS08::GR16RegClass : &HCS08::GR8RegClass;
-    Register VReg = RegInfo.createVirtualRegister(RC);
-    RegInfo.addLiveIn(VA.getLocReg(), VReg);
-    SDValue Val = DAG.getCopyFromReg(Chain, dl, VReg, RegVT);
+    if (VA.isRegLoc()) {
+      const TargetRegisterClass *RC =
+          LocVT == MVT::i16 ? &HCS08::GR16RegClass : &HCS08::GR8RegClass;
+      Register VReg = RegInfo.createVirtualRegister(RC);
+      RegInfo.addLiveIn(VA.getLocReg(), VReg);
+      Val = DAG.getCopyFromReg(Chain, dl, VReg, LocVT);
+    } else {
+      // A stack argument lives in the caller's frame, above the two-byte
+      // return address that jsr pushed. Frame-object offsets are measured
+      // from the entry SP (object N sits at entry-SP + 1 + N), so the
+      // argument at call-frame offset N is the fixed object at N + 2.
+      int FI = MFI.CreateFixedObject(LocVT.getStoreSize(),
+                                     VA.getLocMemOffset() + 2,
+                                     /*IsImmutable=*/true);
+      SDValue FIN = DAG.getFrameIndex(FI, MVT::i16);
+      Val = DAG.getLoad(LocVT, dl, Chain, FIN,
+                        MachinePointerInfo::getFixedStack(MF, FI));
+    }
 
     // The only widening we do is i1 -> i8; truncate it back.
     if (VA.getLocInfo() != CCValAssign::Full)
@@ -187,6 +201,7 @@ SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
 
   SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
+  SmallVector<SDValue, 4> MemOpChains;
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
     CCValAssign &VA = ArgLocs[i];
     SDValue Arg = OutVals[i];
@@ -205,10 +220,30 @@ SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     default:
       report_fatal_error("unsupported argument location info");
     }
-    if (!VA.isRegLoc())
-      report_fatal_error("HCS08 stack call arguments not yet implemented");
-    RegsToPass.push_back({VA.getLocReg(), Arg});
+    if (VA.isRegLoc()) {
+      RegsToPass.push_back({VA.getLocReg(), Arg});
+      continue;
+    }
+
+    // The call frame is reserved by the prologue and sits at the bottom of
+    // the frame, so call-frame offset N is "N+1,sp": n,sp addresses SP+n, and
+    // the lowest byte of the frame is one above SP (see eliminateFrameIndex).
+    // These stores carry no frame index, so nothing else applies that bias.
+    //
+    // Building the address as a target node keeps SP out of the allocator's
+    // way - it is a reserved register, and H:X is too scarce to spend on a
+    // frame base.
+    SDValue Addr =
+        DAG.getNode(HCS08ISD::OutArgAddr, dl, MVT::i16,
+                    DAG.getTargetConstant(VA.getLocMemOffset() + 1, dl, MVT::i8));
+    MemOpChains.push_back(DAG.getStore(
+        Chain, dl, Arg, Addr,
+        MachinePointerInfo::getStack(DAG.getMachineFunction(),
+                                     VA.getLocMemOffset())));
   }
+
+  if (!MemOpChains.empty())
+    Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains);
 
   SDValue InGlue;
   for (auto &RP : RegsToPass) {

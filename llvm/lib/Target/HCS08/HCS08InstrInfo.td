@@ -56,6 +56,13 @@ def HCS08callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_HCS08CallSeqStart,
 def HCS08callseq_end : SDNode<"ISD::CALLSEQ_END", SDT_HCS08CallSeqEnd,
                               [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
 
+// Address of a byte in the outgoing-argument area of the reserved call frame.
+// The operand is the SP-relative displacement, and it is already final: the
+// call frame is allocated at the bottom of the frame, so displacement N is
+// reachable as "N,sp" with no frame index to eliminate. See LowerCall.
+def SDT_HCS08OutArg : SDTypeProfile<1, 1, [SDTCisVT<0, i16>, SDTCisVT<1, i8>]>;
+def HCS08outarg : SDNode<"HCS08ISD::OutArgAddr", SDT_HCS08OutArg>;
+
 // Pseudo-instruction base (no encoding).
 class HCS08Pseudo<dag outs, dag ins, list<dag> pattern>
     : HCS08Inst<0, AddrModeNone, outs, ins, "", pattern> {
@@ -111,6 +118,20 @@ class BranchTarget<string dec> : Operand<i16> {
 def brtarget2 : BranchTarget<"decodeBranchTarget2">;
 def brtarget3 : BranchTarget<"decodeBranchTarget3">;
 def brtarget4 : BranchTarget<"decodeBranchTarget4">;
+
+// The n,sp addressing mode as a single code-generation operand: a base, which
+// carries a frame index until eliminateFrameIndex rewrites it to SP, plus a
+// byte displacement. Only the displacement is printed and encoded - "sp" is
+// part of the mnemonic form - so both jobs read past the base operand.
+def spmem : Operand<i16> {
+  let MIOperandInfo = (ops GR16, imm8);
+  let PrintMethod = "printSPMem";
+  let EncoderMethod = "getSPMemOpValue";
+}
+
+// A frame-index address, optionally offset by a constant, matched into an
+// spmem operand pair.
+def stackaddr : ComplexPattern<i16, 2, "SelectStackAddr", [], []>;
 
 //===----------------------------------------------------------------------===//
 // Load / store / arithmetic: the regular 8-addressing-mode matrix.
@@ -472,7 +493,7 @@ multiclass ALU8<bits<8> immop, bits<8> extop, bits<8> spop, string m,
     // Stack-relative form; the fold target for the reg-reg pseudo below.
     let mayLoad = 1 in
     def sp : F24P<spop, AddrModeSp1, (outs GR8:$dst),
-                  (ins GR8:$src, GR16:$base, imm8:$b0), m # "\t$b0,sp", []>;
+                  (ins GR8:$src, spmem:$b0), m # "\t$b0", []>;
     // Reg-reg pseudo. HCS08 has no reg-reg ALU, so this is always folded to
     // the stack form by foldMemoryOperandImpl once the second source is
     // spilled (which it must be, since A is the only 8-bit register).
@@ -547,25 +568,33 @@ def BRAcc : F16<0x20, AddrModeRel, (outs), (ins brtarget2:$b0), "bra\t$b0", []>;
 //===----------------------------------------------------------------------===//
 // Stack-relative load/store and stack-pointer adjust (code generation).
 //
-// These are emitted directly by frame lowering / register spilling. The $base
-// operand carries a frame index at instruction-selection time and is rewritten
-// to SP with a concrete displacement by eliminateFrameIndex.
+// These are emitted by frame lowering / register spilling and selected for
+// frame-index addresses. The $base operand carries a frame index at
+// instruction-selection time and is rewritten to SP with a concrete
+// displacement by eliminateFrameIndex.
 //===----------------------------------------------------------------------===//
 
 let isCodeGenOnly = 1, Uses = [SP], hasSideEffects = 0 in {
   let mayLoad = 1 in {
-    def LDAsp : F24P<0xE6, AddrModeSp1, (outs GR8:$dst),
-                     (ins GR16:$base, imm8:$b0), "lda\t$b0,sp", []>;
-    def LDHXsp : F24P<0xFE, AddrModeSp1, (outs GR16:$dst),
-                      (ins GR16:$base, imm8:$b0), "ldhx\t$b0,sp", []>;
+    def LDAsp : F24P<0xE6, AddrModeSp1, (outs GR8:$dst), (ins spmem:$b0),
+                     "lda\t$b0", []>;
+    def LDHXsp : F24P<0xFE, AddrModeSp1, (outs GR16:$dst), (ins spmem:$b0),
+                      "ldhx\t$b0", []>;
   }
   let mayStore = 1 in {
-    def STAsp : F24P<0xE7, AddrModeSp1, (outs),
-                     (ins GR8:$src, GR16:$base, imm8:$b0), "sta\t$b0,sp", []>;
-    def STHXsp : F24P<0xFF, AddrModeSp1, (outs),
-                      (ins GR16:$src, GR16:$base, imm8:$b0), "sthx\t$b0,sp", []>;
+    def STAsp : F24P<0xE7, AddrModeSp1, (outs), (ins GR8:$src, spmem:$b0),
+                     "sta\t$b0", []>;
+    def STHXsp : F24P<0xFF, AddrModeSp1, (outs), (ins GR16:$src, spmem:$b0),
+                      "sthx\t$b0", []>;
   }
 }
+
+// Anything living in a frame object - an incoming stack argument, an alloca,
+// a spill slot - is reached through these.
+def : Pat<(i8  (load stackaddr:$addr)), (LDAsp  stackaddr:$addr)>;
+def : Pat<(i16 (load stackaddr:$addr)), (LDHXsp stackaddr:$addr)>;
+def : Pat<(store GR8:$src,  stackaddr:$addr), (STAsp  GR8:$src,  stackaddr:$addr)>;
+def : Pat<(store GR16:$src, stackaddr:$addr), (STHXsp GR16:$src, stackaddr:$addr)>;
 
 // Add a signed byte to SP (frame allocate/free).
 let isCodeGenOnly = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in
@@ -574,6 +603,17 @@ def AISi : F16<0xA7, AddrModeImm, (outs), (ins imm8:$b0), "ais\t#$b0", []>;
 //===----------------------------------------------------------------------===//
 // Calls (code generation).
 //===----------------------------------------------------------------------===//
+
+// Stores into the outgoing-argument area of the reserved call frame. Unlike
+// STAsp / STHXsp the displacement is already an SP offset, so these never
+// reach eliminateFrameIndex.
+let isCodeGenOnly = 1, Uses = [SP], mayStore = 1, hasSideEffects = 0 in {
+  def STAout : F24P<0xE7, AddrModeSp1, (outs), (ins GR8:$src, imm8:$b0),
+                    "sta\t$b0,sp", [(store GR8:$src, (HCS08outarg timm:$b0))]>;
+  def STHXout : F24P<0xFF, AddrModeSp1, (outs), (ins GR16:$src, imm8:$b0),
+                     "sthx\t$b0,sp",
+                     [(store GR16:$src, (HCS08outarg timm:$b0))]>;
+}
 
 // Call-sequence markers, expanded away by eliminateCallFramePseudoInstr.
 let Defs = [SP], Uses = [SP] in {

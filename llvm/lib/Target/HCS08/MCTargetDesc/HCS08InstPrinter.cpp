@@ -59,6 +59,15 @@ void HCS08InstPrinter::printImm16(const MCInst *MI, unsigned OpNo,
   MAI.printExpr(O, *Op.getExpr());
 }
 
+/// Print an n,sp operand. The operand pair is (base, displacement); the base
+/// is always SP by the time this runs, and it is implicit in the syntax, so
+/// only the displacement is printed.
+void HCS08InstPrinter::printSPMem(const MCInst *MI, unsigned OpNo,
+                                   raw_ostream &O) {
+  printImm8(MI, OpNo + 1, O);
+  O << ",sp";
+}
+
 /// Print a branch destination. The disassembler has already turned the encoded
 /// displacement into an absolute address, so this is just a 16-bit value.
 void HCS08InstPrinter::printBranchTarget(const MCInst *MI, uint64_t Address,

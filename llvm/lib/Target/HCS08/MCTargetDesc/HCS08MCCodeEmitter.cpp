@@ -66,16 +66,31 @@ class HCS08MCCodeEmitter : public MCCodeEmitter {
   /// Byte offset of the operand's encoding field from the start of the
   /// instruction.
   ///
-  /// Operand bytes always occupy the tail of the encoding: a 16-bit field is
-  /// the last two bytes, and where an instruction has two byte-sized fields
-  /// they are the last two bytes in operand order. That covers every HCS08
-  /// format, because a 16-bit field never shares an instruction with a second
-  /// operand.
+  /// Encoded fields always occupy the tail: a 16-bit field is the last two
+  /// bytes and never shares an instruction with another field, and where there
+  /// are two byte-sized fields they are the last two bytes in operand order.
+  ///
+  /// The position has to be counted over the *encoded* operands rather than
+  /// over all of them. A code-generation form carries register operands that
+  /// contribute nothing to the encoding - "lda #$nn" is written with a
+  /// destination register the assembler's own form does not have - so operand
+  /// index and byte position are not the same thing.
   unsigned getFixupOffset(const MCInst &MI, unsigned Op, unsigned Width) const {
     unsigned Size = MCII.get(MI.getOpcode()).getSize();
-    if (MI.getNumOperands() == 1)
-      return Size - Width / 8;
-    return Size - 2 + Op;
+    if (Width == 16)
+      return Size - 2;
+
+    unsigned Index = 0, Total = 0;
+    for (unsigned I = 0, E = MI.getNumOperands(); I != E; ++I) {
+      const MCOperand &MO = MI.getOperand(I);
+      if (!MO.isImm() && !MO.isExpr())
+        continue;
+      if (I < Op)
+        ++Index;
+      ++Total;
+    }
+    assert(Total >= 1 && Total <= 2 && "unexpected number of encoded fields");
+    return Size - Total + Index;
   }
 
 public:

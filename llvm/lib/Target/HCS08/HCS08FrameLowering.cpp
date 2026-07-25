@@ -7,9 +7,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "HCS08FrameLowering.h"
+#include "HCS08.h"
+#include "HCS08InstrInfo.h"
 #include "HCS08Subtarget.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 
 using namespace llvm;
 
@@ -24,14 +27,30 @@ bool HCS08FrameLowering::hasFPImpl(const MachineFunction &MF) const {
 
 void HCS08FrameLowering::emitPrologue(MachineFunction &MF,
                                       MachineBasicBlock &MBB) const {
-  // Phase 0: only frameless functions are supported. Real prologue emission
-  // (ais #-frameSize, etc.) lands in Phase 1.
-  assert(MF.getFrameInfo().getStackSize() == 0 &&
-         "HCS08 prologue emission not yet implemented");
+  int64_t StackSize = MF.getFrameInfo().getStackSize();
+  if (StackSize == 0)
+    return;
+
+  // ais takes a signed byte; larger frames need a different sequence.
+  assert(StackSize <= 128 && "HCS08 frame too large for a single ais");
+
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  MachineBasicBlock::iterator MBBI = MBB.begin();
+  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  BuildMI(MBB, MBBI, DL, TII.get(HCS08::AISi)).addImm(-StackSize);
 }
 
 void HCS08FrameLowering::emitEpilogue(MachineFunction &MF,
-                                      MachineBasicBlock &MBB) const {}
+                                      MachineBasicBlock &MBB) const {
+  int64_t StackSize = MF.getFrameInfo().getStackSize();
+  if (StackSize == 0)
+    return;
+
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  MachineBasicBlock::iterator MBBI = MBB.getFirstTerminator();
+  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  BuildMI(MBB, MBBI, DL, TII.get(HCS08::AISi)).addImm(StackSize);
+}
 
 MachineBasicBlock::iterator HCS08FrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,

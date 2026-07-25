@@ -472,3 +472,30 @@ def BPLcc : BranchCC<0x2A, "bpl">;
 // Unconditional branch, custom-selected from ISD::BR (see HCS08ISelDAGToDAG).
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in
 def BRAcc : F16<0x20, AddrModeRel, (outs), (ins brtarget2:$b0), "bra\t$b0", []>;
+
+//===----------------------------------------------------------------------===//
+// Stack-relative load/store and stack-pointer adjust (code generation).
+//
+// These are emitted directly by frame lowering / register spilling. The $base
+// operand carries a frame index at instruction-selection time and is rewritten
+// to SP with a concrete displacement by eliminateFrameIndex.
+//===----------------------------------------------------------------------===//
+
+let isCodeGenOnly = 1, Uses = [SP], hasSideEffects = 0 in {
+  let mayLoad = 1 in {
+    def LDAsp : F24P<0xE6, AddrModeSp1, (outs GR8:$dst),
+                     (ins GR16:$base, imm8:$b0), "lda\t$b0,sp", []>;
+    def LDHXsp : F24P<0xFE, AddrModeSp1, (outs GR16:$dst),
+                      (ins GR16:$base, imm8:$b0), "ldhx\t$b0,sp", []>;
+  }
+  let mayStore = 1 in {
+    def STAsp : F24P<0xE7, AddrModeSp1, (outs),
+                     (ins GR8:$src, GR16:$base, imm8:$b0), "sta\t$b0,sp", []>;
+    def STHXsp : F24P<0xFF, AddrModeSp1, (outs),
+                      (ins GR16:$src, GR16:$base, imm8:$b0), "sthx\t$b0,sp", []>;
+  }
+}
+
+// Add a signed byte to SP (frame allocate/free).
+let isCodeGenOnly = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in
+def AISi : F16<0xA7, AddrModeImm, (outs), (ins imm8:$b0), "ais\t#$b0", []>;

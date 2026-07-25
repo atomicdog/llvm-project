@@ -32,6 +32,46 @@ void HCS08InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   report_fatal_error("HCS08 copyPhysReg not yet implemented");
 }
 
+void HCS08InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
+                                         MachineBasicBlock::iterator MI,
+                                         Register SrcReg, bool isKill,
+                                         int FrameIndex,
+                                         const TargetRegisterClass *RC,
+                                         Register VReg,
+                                         MachineInstr::MIFlag Flags) const {
+  DebugLoc DL = MI != MBB.end() ? MI->getDebugLoc() : DebugLoc();
+  unsigned Opc;
+  if (HCS08::GR8RegClass.hasSubClassEq(RC))
+    Opc = HCS08::STAsp;
+  else if (HCS08::GR16RegClass.hasSubClassEq(RC))
+    Opc = HCS08::STHXsp;
+  else
+    report_fatal_error("cannot store this register class to a stack slot");
+
+  BuildMI(MBB, MI, DL, get(Opc))
+      .addReg(SrcReg, getKillRegState(isKill))
+      .addFrameIndex(FrameIndex)
+      .addImm(0);
+}
+
+void HCS08InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MI,
+                                          Register DestReg, int FrameIndex,
+                                          const TargetRegisterClass *RC,
+                                          Register VReg, unsigned SubReg,
+                                          MachineInstr::MIFlag Flags) const {
+  DebugLoc DL = MI != MBB.end() ? MI->getDebugLoc() : DebugLoc();
+  unsigned Opc;
+  if (HCS08::GR8RegClass.hasSubClassEq(RC))
+    Opc = HCS08::LDAsp;
+  else if (HCS08::GR16RegClass.hasSubClassEq(RC))
+    Opc = HCS08::LDHXsp;
+  else
+    report_fatal_error("cannot load this register class from a stack slot");
+
+  BuildMI(MBB, MI, DL, get(Opc), DestReg).addFrameIndex(FrameIndex).addImm(0);
+}
+
 static bool isCondBranchOpc(unsigned Opc) {
   switch (Opc) {
   case HCS08::BEQcc:

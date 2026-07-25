@@ -43,9 +43,25 @@ HCS08RegisterInfo::getPointerRegClass(unsigned Kind) const {
 bool HCS08RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
                                             int SPAdj, unsigned FIOperandNum,
                                             RegScavenger *RS) const {
-  // Phase 0 handles only functions without stack frame indices. Frame
-  // lowering (Phase 1) will implement SP-relative resolution here.
-  report_fatal_error("HCS08 frame index elimination not yet implemented");
+  assert(SPAdj == 0 && "unexpected SP adjustment");
+  MachineInstr &MI = *II;
+  const MachineFunction &MF = *MI.getParent()->getParent();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+
+  int FI = MI.getOperand(FIOperandNum).getIndex();
+
+  // Object offsets are negative (below the frame base); adding the frame size
+  // maps them into [0, StackSize). The n,sp addressing computes SP+1+n, which
+  // is where the allocated bytes live after "ais #-StackSize".
+  int64_t Offset = MFI.getObjectOffset(FI) + (int64_t)MFI.getStackSize();
+  Offset += MI.getOperand(FIOperandNum + 1).getImm();
+
+  assert(Offset >= 0 && isUInt<8>(Offset) &&
+         "HCS08 SP-relative offset out of range (needs SP2/H:X base)");
+
+  MI.getOperand(FIOperandNum).ChangeToRegister(HCS08::SP, /*isDef=*/false);
+  MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+  return false;
 }
 
 Register HCS08RegisterInfo::getFrameRegister(const MachineFunction &MF) const {

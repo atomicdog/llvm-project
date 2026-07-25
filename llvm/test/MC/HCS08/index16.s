@@ -18,8 +18,8 @@
 	ldhx	$10,x
 	ldhx	$10,sp
 
-; CHECK: sthx $10                            ; encoding: [0x96,0x10]
-; CHECK: sthx $1234                          ; encoding: [0x35,0x12,0x34]
+; CHECK: sthx $10                            ; encoding: [0x35,0x10]
+; CHECK: sthx $1234                          ; encoding: [0x96,0x12,0x34]
 ; CHECK: sthx $10,sp                         ; encoding: [0x9e,0xff,0x10]
 	sthx	$10
 	sthx	$1234

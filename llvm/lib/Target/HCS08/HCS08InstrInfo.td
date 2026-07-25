@@ -381,8 +381,8 @@ def LDHX_ix2 : F32P<0xBE, AddrModeIx2, (outs), (ins imm16:$w0), "ldhx\t$w0,x">;
 def LDHX_ix1 : F24P<0xCE, AddrModeIx1, (outs), (ins imm8:$b0), "ldhx\t$b0,x">;
 def LDHX_sp1 : F24P<0xFE, AddrModeSp1, (outs), (ins imm8:$b0), "ldhx\t$b0,sp">;
 
-def STHX_dir : F16 <0x96, AddrModeDir, (outs), (ins imm8:$b0), "sthx\t$b0">;
-def STHX_ext : F24 <0x35, AddrModeExt, (outs), (ins imm16:$w0), "sthx\t$w0">;
+def STHX_dir : F16 <0x35, AddrModeDir, (outs), (ins imm8:$b0), "sthx\t$b0">;
+def STHX_ext : F24 <0x96, AddrModeExt, (outs), (ins imm16:$w0), "sthx\t$w0">;
 def STHX_sp1 : F24P<0xFF, AddrModeSp1, (outs), (ins imm8:$b0), "sthx\t$b0,sp">;
 
 def CPHX_imm : F24 <0x65, AddrModeImm, (outs), (ins imm16:$w0), "cphx\t#$w0">;
@@ -476,7 +476,7 @@ let isCodeGenOnly = 1, Defs = [NZV] in {
     def STAext : F24<0xC7, AddrModeExt, (outs), (ins GR8:$src, imm16:$w0),
                      "sta\t$w0",
                      [(store GR8:$src, (HCS08Wrapper tglobaladdr:$w0))]>;
-    def STHXext : F24<0x35, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
+    def STHXext : F24<0x96, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
                       "sthx\t$w0",
                       [(store GR16:$src, (HCS08Wrapper tglobaladdr:$w0))]>;
   }

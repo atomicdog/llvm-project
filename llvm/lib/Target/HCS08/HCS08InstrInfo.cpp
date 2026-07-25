@@ -88,6 +88,28 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   // The low byte's operation sets the carry and the high byte's consumes it.
   unsigned LoOpc, HiOpc;
   switch (MI.getOpcode()) {
+  case HCS08::ZEXT8to16:
+  case HCS08::SEXT8to16: {
+    // The value is in A and wanted in H:X. tax moves it to the low half; what
+    // differs is what H gets. For the sign extension, lsla puts the sign bit
+    // in the carry and 0 - 0 - carry is 0x00 or 0xFF, which psha/pulh carries
+    // into H - clra leaves the carry alone, which is what makes that work.
+    MachineBasicBlock &MBB = *MI.getParent();
+    DebugLoc DL = MI.getDebugLoc();
+
+    BuildMI(MBB, MI, DL, get(HCS08::TAX));
+    if (MI.getOpcode() == HCS08::ZEXT8to16) {
+      BuildMI(MBB, MI, DL, get(HCS08::CLRH));
+    } else {
+      BuildMI(MBB, MI, DL, get(HCS08::LSLA));
+      BuildMI(MBB, MI, DL, get(HCS08::CLRA));
+      BuildMI(MBB, MI, DL, get(HCS08::SBC_imm)).addImm(0);
+      BuildMI(MBB, MI, DL, get(HCS08::PSHA));
+      BuildMI(MBB, MI, DL, get(HCS08::PULH));
+    }
+    MI.eraseFromParent();
+    return true;
+  }
   case HCS08::FRAMEADDR: {
     // The frame index is an SP-relative displacement by now, and n,sp means
     // SP+n, so the address wanted is SP+Disp. tsx gets to SP+1; aix walks the

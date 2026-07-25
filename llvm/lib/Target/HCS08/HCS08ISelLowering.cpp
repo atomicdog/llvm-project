@@ -50,6 +50,17 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
   }
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
 
+  // There is no widening load: a narrow value is loaded and then extended.
+  for (MVT VT : MVT::integer_valuetypes()) {
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i8, Expand);
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i8, Expand);
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i8, Expand);
+  }
+  setTruncStoreAction(MVT::i16, MVT::i8, Expand);
+
   // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
   setOperationAction(ISD::SHL, MVT::i8, Custom);
   setOperationAction(ISD::SRL, MVT::i8, Custom);

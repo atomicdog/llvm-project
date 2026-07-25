@@ -694,6 +694,34 @@ def AND16m : ALU16mem;
 def ORA16m : ALU16mem;
 def EOR16m : ALU16mem;
 
+//===----------------------------------------------------------------------===//
+// Changing width between the accumulator and the index register.
+//
+// The two registers are the two widths, so these are transfers: X is the low
+// half of H:X, which makes truncation a single txa, and widening a matter of
+// getting the right thing into H.
+//===----------------------------------------------------------------------===//
+
+// The low byte of H:X is X.
+let isCodeGenOnly = 1, hasSideEffects = 0 in
+def TXAd : F8<0x9F, AddrModeInh, (outs GR8:$dst), (ins GR16:$src), "txa",
+              [(set GR8:$dst, (trunc GR16:$src))]>;
+
+let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0, Defs = [A, CCR] in {
+  // tax then clrh. An any-extend goes the same way rather than leaving H
+  // undefined, which would be a value nothing later is allowed to look at.
+  def ZEXT8to16 : HCS08Inst<2, AddrModeNone, (outs GR16:$dst), (ins GR8:$src),
+                            "", []>;
+  // tax, then a copy of the sign bit into H, built without branching:
+  // lsla puts it in the carry, and 0 - 0 - carry is 0 or -1.
+  def SEXT8to16 : HCS08Inst<7, AddrModeNone, (outs GR16:$dst), (ins GR8:$src),
+                            "", []>;
+}
+
+def : Pat<(i16 (zext GR8:$src)), (ZEXT8to16 GR8:$src)>;
+def : Pat<(i16 (anyext GR8:$src)), (ZEXT8to16 GR8:$src)>;
+def : Pat<(i16 (sext GR8:$src)), (SEXT8to16 GR8:$src)>;
+
 // Negate the accumulator.
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
     hasSideEffects = 0 in

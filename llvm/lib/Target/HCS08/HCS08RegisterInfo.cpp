@@ -50,10 +50,17 @@ bool HCS08RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   int FI = MI.getOperand(FIOperandNum).getIndex();
 
-  // Object offsets are negative (below the frame base); adding the frame size
-  // maps them into [0, StackSize). The n,sp addressing computes SP+1+n, which
-  // is where the allocated bytes live after "ais #-StackSize".
-  int64_t Offset = MFI.getObjectOffset(FI) + (int64_t)MFI.getStackSize();
+  // The n,sp addressing mode computes SP+n, and SP points one byte *below*
+  // the last thing pushed, so the lowest byte of the frame is 1,sp and 0,sp
+  // is the byte the next push will take. (Verified against an independent HC08
+  // model; getting this wrong puts every object one byte low, and the bottom
+  // one is then overwritten by the return address of the next call.)
+  //
+  // Frame-object offsets are measured from the entry SP: locals are negative
+  // (below it), incoming stack arguments positive (above it, past the return
+  // address). Object N lives at entry-SP + 1 + N, so rebasing onto the
+  // post-prologue SP gives N + StackSize + 1.
+  int64_t Offset = MFI.getObjectOffset(FI) + (int64_t)MFI.getStackSize() + 1;
   Offset += MI.getOperand(FIOperandNum + 1).getImm();
 
   assert(Offset >= 0 && isUInt<8>(Offset) &&

@@ -39,6 +39,13 @@ def HCS08cmp  : SDNode<"HCS08ISD::CMP", SDT_HCS08Cmp, [SDNPOutGlue]>;
 def HCS08brcc : SDNode<"HCS08ISD::BR_CC", SDT_HCS08BrCC,
                        [SDNPHasChain, SDNPInGlue]>;
 
+// Pick between two values on the condition codes a preceding compare set.
+def SDT_HCS08SelectCC : SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>,
+                                             SDTCisSameAs<1, 2>,
+                                             SDTCisVT<3, i8>]>;
+def HCS08selectcc : SDNode<"HCS08ISD::SELECT_CC", SDT_HCS08SelectCC,
+                           [SDNPInGlue]>;
+
 // Single-bit shifts of the accumulator. Multi-bit shifts by a constant are
 // lowered to a chain of these.
 def HCS08shl1 : SDNode<"HCS08ISD::SHL1", SDTIntUnaryOp>;
@@ -708,7 +715,9 @@ let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
 // Compares and conditional branches (code generation).
 //===----------------------------------------------------------------------===//
 
-// cmp A with an immediate or a memory operand, setting the condition codes.
+// cmp A against an immediate or a memory operand, setting the condition codes.
+// Column 1 of the matrix, so the addressing modes follow the same rows as the
+// 8-bit ALU.
 let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
   def CMP8i : F16<0xA1, AddrModeImm, (outs), (ins GR8:$src, imm8:$b0),
                   "cmp\t#$b0", [(HCS08cmp GR8:$src, imm:$b0)]>;
@@ -716,7 +725,58 @@ let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
                     "cmp\t$w0",
                     [(HCS08cmp GR8:$src,
                                (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+  let mayLoad = 1 in {
+    def CMP8sp : F24P<0xE1, AddrModeSp1, (outs), (ins GR8:$src, spmem:$b0),
+                      "cmp\t$b0", [(HCS08cmp GR8:$src, (load stackaddr:$b0))]>;
+    def CMP8ix2 : F24<0xD1, AddrModeIx2, (outs), (ins GR8:$src, ixmem16:$w0),
+                      "cmp\t$w0", [(HCS08cmp GR8:$src, (load ixaddr16:$w0))]>;
+    def CMP8ix1 : F16<0xE1, AddrModeIx1, (outs), (ins GR8:$src, ixmem:$b0),
+                      "cmp\t$b0", [(HCS08cmp GR8:$src, (load ixaddr:$b0))]>;
+    def CMP8ix : F8<0xF1, AddrModeIx, (outs), (ins GR8:$src, GR16:$base),
+                    "cmp\t,x", [(HCS08cmp GR8:$src, (load ixbase:$base))]>;
+  }
+  // A second operand in a register, which this machine cannot compare against
+  // any more than it can add to: parked in a frame byte by the custom
+  // inserter, exactly as the reg-reg ALU is.
+  let isPseudo = 1, usesCustomInserter = 1 in
+  def CMP8rr : HCS08Inst<0, AddrModeNone, (outs), (ins GR8:$src, GR8:$src2),
+                         "", [(HCS08cmp GR8:$src, GR8:$src2)]>;
 }
+
+// cphx compares the whole of H:X in one go, so a 16-bit comparison needs no
+// byte chain - unlike a 16-bit addition. There is no indexed form, so a value
+// reached through a pointer goes through the parked form below.
+let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
+  def CMP16i : F24<0x65, AddrModeImm, (outs), (ins GR16:$src, imm16:$w0),
+                   "cphx\t#$w0", [(HCS08cmp GR16:$src, imm:$w0)]>;
+  def CMP16ext : F24<0x3E, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
+                     "cphx\t$w0",
+                     [(HCS08cmp GR16:$src,
+                                (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+  let mayLoad = 1 in
+  def CMP16sp : F24P<0xF3, AddrModeSp1, (outs), (ins GR16:$src, spmem:$b0),
+                     "cphx\t$b0", [(HCS08cmp GR16:$src, (load stackaddr:$b0))]>;
+  let isPseudo = 1, usesCustomInserter = 1 in
+  def CMP16rr : HCS08Inst<0, AddrModeNone, (outs), (ins GR16:$src, GR16:$src2),
+                          "", [(HCS08cmp GR16:$src, GR16:$src2)]>;
+}
+
+// Selecting between two values needs a branch: there is no conditional move,
+// and with one register per class the two candidates cannot both be held
+// anyway. The custom inserter turns these into a diamond.
+class SelectCC<RegisterClass RC>
+    : HCS08Inst<0, AddrModeNone, (outs RC:$dst),
+                (ins RC:$t, RC:$f, imm8:$cc), "",
+                [(set RC:$dst, (HCS08selectcc RC:$t, RC:$f, imm:$cc))]> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+  let usesCustomInserter = 1;
+  let Uses = [CCR];
+  let hasSideEffects = 0;
+}
+
+def SELECT8 : SelectCC<GR8>;
+def SELECT16 : SelectCC<GR16>;
 
 // One conditional branch per condition code. These are pattern-less: a
 // HCS08ISD::BR_CC node is matched to the right one by C++ custom selection in
@@ -772,6 +832,22 @@ def : Pat<(i8  (load stackaddr:$addr)), (LDAsp  stackaddr:$addr)>;
 def : Pat<(i16 (load stackaddr:$addr)), (LDHXsp stackaddr:$addr)>;
 def : Pat<(store GR8:$src,  stackaddr:$addr), (STAsp  GR8:$src,  stackaddr:$addr)>;
 def : Pat<(store GR16:$src, stackaddr:$addr), (STHXsp GR16:$src, stackaddr:$addr)>;
+
+// The address of a frame object, for taking a pointer to a local or for
+// choosing between two of them - DAG combining turns a select of two loads
+// into a load of a selected address, so this is not only about &local.
+//
+// tsx puts SP+1 in H:X and aix walks from there; the displacement is only
+// known once frame indices are resolved, so the walk is emitted in
+// expandPostRAPseudo. Neither instruction touches the condition codes.
+let isCodeGenOnly = 1, hasSideEffects = 0 in {
+  let Uses = [SP] in
+  def TSXd : F8<0x95, AddrModeInh, (outs GR16:$dst), (ins), "tsx", []>;
+
+  let isPseudo = 1, Uses = [SP] in
+  def FRAMEADDR : HCS08Inst<5, AddrModeNone, (outs GR16:$dst), (ins spmem:$b0),
+                            "", []>;
+}
 
 // Add a signed byte to SP (frame allocate/free).
 let isCodeGenOnly = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in

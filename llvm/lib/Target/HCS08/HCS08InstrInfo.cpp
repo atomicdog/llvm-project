@@ -19,6 +19,16 @@ using namespace llvm;
 
 void HCS08InstrInfo::anchor() {}
 
+unsigned HCS08InstrInfo::getCondBranchOpcode(unsigned CC) {
+  // Indexed by HCS08CC::CondCode.
+  static const unsigned BccOpc[] = {
+      HCS08::BEQcc, HCS08::BNEcc, HCS08::BHScc, HCS08::BLOcc,
+      HCS08::BHIcc, HCS08::BLScc, HCS08::BGEcc, HCS08::BLTcc,
+      HCS08::BGTcc, HCS08::BLEcc, HCS08::BMIcc, HCS08::BPLcc};
+  assert(CC < std::size(BccOpc) && "invalid HCS08 condition");
+  return BccOpc[CC];
+}
+
 HCS08InstrInfo::HCS08InstrInfo(const HCS08Subtarget &STI)
     : HCS08GenInstrInfo(STI, RI, HCS08::ADJCALLSTACKDOWN,
                         HCS08::ADJCALLSTACKUP),
@@ -78,6 +88,25 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   // The low byte's operation sets the carry and the high byte's consumes it.
   unsigned LoOpc, HiOpc;
   switch (MI.getOpcode()) {
+  case HCS08::FRAMEADDR: {
+    // The frame index is an SP-relative displacement by now, and n,sp means
+    // SP+n, so the address wanted is SP+Disp. tsx gets to SP+1; aix walks the
+    // rest, a signed byte at a time.
+    MachineBasicBlock &MBB = *MI.getParent();
+    DebugLoc DL = MI.getDebugLoc();
+    Register Dst = MI.getOperand(0).getReg();
+    int64_t Off = MI.getOperand(2).getImm() - 1;
+    assert(Off >= 0 && "frame object below the top of the stack");
+
+    BuildMI(MBB, MI, DL, get(HCS08::TSXd), Dst);
+    while (Off > 0) {
+      int64_t Step = std::min<int64_t>(Off, 127);
+      BuildMI(MBB, MI, DL, get(HCS08::AIXi), Dst).addReg(Dst).addImm(Step);
+      Off -= Step;
+    }
+    MI.eraseFromParent();
+    return true;
+  }
   case HCS08::ADD16m: LoOpc = HCS08::ADD8sp; HiOpc = HCS08::ADC8sp; break;
   case HCS08::SUB16m: LoOpc = HCS08::SUB8sp; HiOpc = HCS08::SBC8sp; break;
   // The logical operations have no carry to propagate; both halves are the

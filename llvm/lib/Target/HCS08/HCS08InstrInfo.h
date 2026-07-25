@@ -28,6 +28,9 @@ public:
 
   const HCS08RegisterInfo &getRegisterInfo() const { return RI; }
 
+  /// The conditional branch that tests a HCS08CC::CondCode.
+  static unsigned getCondBranchOpcode(unsigned CC);
+
   void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                    const DebugLoc &DL, Register DestReg, Register SrcReg,
                    bool KillSrc, bool RenamableDest = false,

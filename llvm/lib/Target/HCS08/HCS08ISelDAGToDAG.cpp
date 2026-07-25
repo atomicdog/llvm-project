@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "HCS08.h"
+#include "HCS08InstrInfo.h"
 #include "HCS08SelectionDAGInfo.h"
 #include "HCS08Subtarget.h"
 #include "HCS08TargetMachine.h"
@@ -164,6 +165,18 @@ void HCS08DAGToDAGISel::Select(SDNode *Node) {
     return;
   }
 
+  // A frame index that reaches selection on its own is an address being
+  // computed rather than an operand being addressed - &local, or the address
+  // half of a select that DAG combining pulled out of two loads.
+  if (Node->getOpcode() == ISD::FrameIndex) {
+    SDLoc dl(Node);
+    int FI = cast<FrameIndexSDNode>(Node)->getIndex();
+    CurDAG->SelectNodeTo(Node, HCS08::FRAMEADDR, MVT::i16,
+                         CurDAG->getTargetFrameIndex(FI, MVT::i16),
+                         CurDAG->getTargetConstant(0, dl, MVT::i8));
+    return;
+  }
+
   // Unconditional branch. Operands: chain, dest.
   if (Node->getOpcode() == ISD::BR) {
     SDValue Chain = Node->getOperand(0);
@@ -175,16 +188,12 @@ void HCS08DAGToDAGISel::Select(SDNode *Node) {
   // A conditional branch carries its HCS08 condition as a constant operand;
   // pick the matching Bcc instruction. Operands: chain, dest, cc, glue.
   if (Node->getOpcode() == HCS08ISD::BR_CC) {
-    static const unsigned BccOpc[] = {
-        HCS08::BEQcc, HCS08::BNEcc, HCS08::BHScc, HCS08::BLOcc,
-        HCS08::BHIcc, HCS08::BLScc, HCS08::BGEcc, HCS08::BLTcc,
-        HCS08::BGTcc, HCS08::BLEcc, HCS08::BMIcc, HCS08::BPLcc};
     unsigned CC = Node->getConstantOperandVal(2);
-    assert(CC < std::size(BccOpc) && "invalid HCS08 condition");
     SDValue Chain = Node->getOperand(0);
     SDValue Dest = Node->getOperand(1);
     SDValue Glue = Node->getOperand(3);
-    CurDAG->SelectNodeTo(Node, BccOpc[CC], MVT::Other, Dest, Chain, Glue);
+    CurDAG->SelectNodeTo(Node, HCS08InstrInfo::getCondBranchOpcode(CC),
+                         MVT::Other, Dest, Chain, Glue);
     return;
   }
 

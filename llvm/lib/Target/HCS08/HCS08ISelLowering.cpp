@@ -39,14 +39,29 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
   // A global address is materialized as a wrapped target address.
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
 
-  // Conditional branches go through a compare that sets the condition codes.
-  setOperationAction(ISD::BR_CC, MVT::i8, Custom);
+  // Conditional branches and selects both go through a compare that sets the
+  // condition codes; there is no way to get a comparison into a register
+  // without branching, so setcc becomes a select of 1 and 0.
+  for (MVT VT : {MVT::i8, MVT::i16}) {
+    setOperationAction(ISD::BR_CC, VT, Custom);
+    setOperationAction(ISD::SELECT_CC, VT, Custom);
+    setOperationAction(ISD::SELECT, VT, Expand);
+    setOperationAction(ISD::SETCC, VT, Expand);
+  }
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
 
   // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
   setOperationAction(ISD::SHL, MVT::i8, Custom);
   setOperationAction(ISD::SRL, MVT::i8, Custom);
   setOperationAction(ISD::SRA, MVT::i8, Custom);
+}
+
+EVT HCS08TargetLowering::getSetCCResultType(const DataLayout &DL,
+                                            LLVMContext &Context,
+                                            EVT VT) const {
+  if (!VT.isVector())
+    return MVT::i8;
+  return VT.changeVectorElementTypeToInteger();
 }
 
 SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
@@ -56,6 +71,8 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
     return LowerGlobalAddress(Op, DAG);
   case ISD::BR_CC:
     return LowerBR_CC(Op, DAG);
+  case ISD::SELECT_CC:
+    return LowerSELECT_CC(Op, DAG);
   case ISD::SHL:
   case ISD::SRL:
   case ISD::SRA:
@@ -172,6 +189,85 @@ static MachineBasicBlock *emitALU16(MachineInstr &MI, MachineBasicBlock *MBB,
   return MBB;
 }
 
+// Compare against an operand that is in a register, by parking it first.
+//
+// The comparison itself reads memory, like every other second operand on this
+// machine. The park has to come before the compare, which it does: it is
+// emitted here, ahead of the compare, and sthx and sta do not outlive it.
+static MachineBasicBlock *emitCmpParked(MachineInstr &MI,
+                                        MachineBasicBlock *MBB, bool Is16) {
+  MachineFunction &MF = *MBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+
+  int FI;
+  if (Is16) {
+    FI = getWord16Temp(MF, /*Second=*/true);
+  } else {
+    auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+    FI = FuncInfo->getALUTempFI();
+    if (FI == -1) {
+      FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
+      FuncInfo->setALUTempFI(FI);
+    }
+  }
+
+  BuildMI(*MBB, MI, DL, TII.get(Is16 ? HCS08::STHXsp : HCS08::STAsp))
+      .add(MI.getOperand(1))
+      .addFrameIndex(FI)
+      .addImm(0);
+  BuildMI(*MBB, MI, DL, TII.get(Is16 ? HCS08::CMP16sp : HCS08::CMP8sp))
+      .add(MI.getOperand(0))
+      .addFrameIndex(FI)
+      .addImm(0);
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
+// Expand a select into a diamond: the condition codes are already set, so
+// branch over the assignment of the false value.
+//
+//   thisMBB:  bCC sinkMBB          (true value is live out of here)
+//   falseMBB: (empty, falls through)
+//   sinkMBB:  dst = PHI [true, thisMBB], [false, falseMBB]
+static MachineBasicBlock *emitSelect(MachineInstr &MI,
+                                     MachineBasicBlock *ThisMBB) {
+  MachineFunction &MF = *ThisMBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+  const BasicBlock *BB = ThisMBB->getBasicBlock();
+  MachineFunction::iterator It = ++ThisMBB->getIterator();
+
+  MachineBasicBlock *FalseMBB = MF.CreateMachineBasicBlock(BB);
+  MachineBasicBlock *SinkMBB = MF.CreateMachineBasicBlock(BB);
+  MF.insert(It, FalseMBB);
+  MF.insert(It, SinkMBB);
+
+  // Everything after the select moves to the join block.
+  SinkMBB->splice(SinkMBB->begin(), ThisMBB,
+                  std::next(MachineBasicBlock::iterator(MI)), ThisMBB->end());
+  SinkMBB->transferSuccessorsAndUpdatePHIs(ThisMBB);
+
+  ThisMBB->addSuccessor(FalseMBB);
+  ThisMBB->addSuccessor(SinkMBB);
+  FalseMBB->addSuccessor(SinkMBB);
+
+  unsigned CC = MI.getOperand(3).getImm();
+  BuildMI(ThisMBB, DL, TII.get(HCS08InstrInfo::getCondBranchOpcode(CC)))
+      .addMBB(SinkMBB);
+
+  BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(HCS08::PHI),
+          MI.getOperand(0).getReg())
+      .addReg(MI.getOperand(1).getReg())
+      .addMBB(ThisMBB)
+      .addReg(MI.getOperand(2).getReg())
+      .addMBB(FalseMBB);
+
+  MI.eraseFromParent();
+  return SinkMBB;
+}
+
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {
@@ -179,6 +275,11 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   switch (MI.getOpcode()) {
   case HCS08::STHXix:
     return emitStore16Indexed(MI, MBB);
+  case HCS08::CMP8rr:  return emitCmpParked(MI, MBB, /*Is16=*/false);
+  case HCS08::CMP16rr: return emitCmpParked(MI, MBB, /*Is16=*/true);
+  case HCS08::SELECT8:
+  case HCS08::SELECT16:
+    return emitSelect(MI, MBB);
   case HCS08::ADD16rr: return emitALU16(MI, MBB, HCS08::ADD16m, false);
   case HCS08::SUB16rr: return emitALU16(MI, MBB, HCS08::SUB16m, false);
   case HCS08::AND16rr: return emitALU16(MI, MBB, HCS08::AND16m, false);
@@ -282,6 +383,22 @@ SDValue HCS08TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue Flag = DAG.getNode(HCS08ISD::CMP, dl, MVT::Glue, LHS, RHS);
   SDValue TargetCC = DAG.getConstant(translateCC(CC), dl, MVT::i8);
   return DAG.getNode(HCS08ISD::BR_CC, dl, MVT::Other, Chain, Dest, TargetCC,
+                     Flag);
+}
+
+SDValue HCS08TargetLowering::LowerSELECT_CC(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  SDValue LHS = Op.getOperand(0);
+  SDValue RHS = Op.getOperand(1);
+  SDValue TrueV = Op.getOperand(2);
+  SDValue FalseV = Op.getOperand(3);
+  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
+  SDLoc dl(Op);
+
+  SDValue Flag = DAG.getNode(HCS08ISD::CMP, dl, MVT::Glue, LHS, RHS);
+  SDValue TargetCC = DAG.getConstant(translateCC(CC), dl, MVT::i8);
+  SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
+  return DAG.getNode(HCS08ISD::SELECT_CC, dl, VTs, TrueV, FalseV, TargetCC,
                      Flag);
 }
 

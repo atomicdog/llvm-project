@@ -78,6 +78,7 @@ llvm_config.feature_config(
                 "AMDGPU": "amdgpu",
                 "ARM": "arm",
                 "AVR": "avr",
+                "HCS08": "hcs08",
                 "Hexagon": "hexagon",
                 "LoongArch": "loongarch",
                 "Mips": "mips",

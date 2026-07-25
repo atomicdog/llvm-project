@@ -361,3 +361,14 @@ def TXA  : Inherent<0x9F, "txa">;
 
 // A function return lowers to RTS.
 def : Pat<(HCS08retglue), (RTS)>;
+
+// Code-generation-only views of the immediate loads. The MC-layer forms are
+// accumulator-implicit (no register operands); these carry the def register so
+// the selector can model the data flow. They share the real encodings and are
+// excluded from the assembler/disassembler by isCodeGenOnly.
+let isCodeGenOnly = 1, hasSideEffects = 0 in {
+  def LDAi : F16<0xA6, AddrModeImm, (outs GR8:$dst), (ins imm8:$b0),
+                 "lda\t#$b0", [(set GR8:$dst, imm:$b0)]>;
+  def LDHXi : F24<0x45, AddrModeImm, (outs GR16:$dst), (ins imm16:$w0),
+                  "ldhx\t#$w0", [(set GR16:$dst, imm:$w0)]>;
+}

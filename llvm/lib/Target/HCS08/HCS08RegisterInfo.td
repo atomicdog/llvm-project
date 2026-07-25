@@ -51,8 +51,13 @@ def HX : HCS08RegWithSubRegs<6, "hx", [H, X]>;
 
 // Everything is byte aligned on this target; there are no alignment
 // requirements on any access.
-def GR8  : RegisterClass<"HCS08", [i8],  8, (add A, X, H)>;
-def GR16 : RegisterClass<"HCS08", [i16], 8, (add HX, SP)>;
+//
+// Model A (see CodeGenDesign.md): the only allocatable 8-bit register is the
+// accumulator A, and the only allocatable 16-bit register is the index pair
+// H:X. SP is reserved. X and H remain defined as the halves of H:X but are not
+// independently allocatable yet.
+def GR8  : RegisterClass<"HCS08", [i8],  8, (add A)>;
+def GR16 : RegisterClass<"HCS08", [i16], 8, (add HX)>;
 
 def CCRC : RegisterClass<"HCS08", [i8], 8, (add CCR)> {
   let CopyCost = -1;

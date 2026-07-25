@@ -39,6 +39,24 @@ def HCS08cmp  : SDNode<"HCS08ISD::CMP", SDT_HCS08Cmp, [SDNPOutGlue]>;
 def HCS08brcc : SDNode<"HCS08ISD::BR_CC", SDT_HCS08BrCC,
                        [SDNPHasChain, SDNPInGlue]>;
 
+// Direct call and the call-sequence markers.
+def SDT_HCS08Call : SDTypeProfile<0, -1, [SDTCisVT<0, iPTR>]>;
+def HCS08call : SDNode<"HCS08ISD::CALL", SDT_HCS08Call,
+                       [SDNPHasChain, SDNPOutGlue, SDNPOptInGlue, SDNPVariadic]>;
+def SDT_HCS08CallSeqStart : SDCallSeqStart<[SDTCisVT<0, i16>, SDTCisVT<1, i16>]>;
+def SDT_HCS08CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i16>, SDTCisVT<1, i16>]>;
+def HCS08callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_HCS08CallSeqStart,
+                                [SDNPHasChain, SDNPOutGlue]>;
+def HCS08callseq_end : SDNode<"ISD::CALLSEQ_END", SDT_HCS08CallSeqEnd,
+                              [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
+
+// Pseudo-instruction base (no encoding).
+class HCS08Pseudo<dag outs, dag ins, list<dag> pattern>
+    : HCS08Inst<0, AddrModeNone, outs, ins, "", pattern> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Operands
 //===----------------------------------------------------------------------===//
@@ -511,3 +529,25 @@ let isCodeGenOnly = 1, Uses = [SP], hasSideEffects = 0 in {
 // Add a signed byte to SP (frame allocate/free).
 let isCodeGenOnly = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in
 def AISi : F16<0xA7, AddrModeImm, (outs), (ins imm8:$b0), "ais\t#$b0", []>;
+
+//===----------------------------------------------------------------------===//
+// Calls (code generation).
+//===----------------------------------------------------------------------===//
+
+// Call-sequence markers, expanded away by eliminateCallFramePseudoInstr.
+let Defs = [SP], Uses = [SP] in {
+  def ADJCALLSTACKDOWN
+      : HCS08Pseudo<(outs), (ins i16imm:$amt1, i16imm:$amt2),
+                    [(HCS08callseq_start timm:$amt1, timm:$amt2)]>;
+  def ADJCALLSTACKUP
+      : HCS08Pseudo<(outs), (ins i16imm:$amt1, i16imm:$amt2),
+                    [(HCS08callseq_end timm:$amt1, timm:$amt2)]>;
+}
+
+// Direct call to a 16-bit absolute address. Clobbers the caller-saved
+// registers; the return value comes back in A / H:X.
+let isCall = 1, isCodeGenOnly = 1, Defs = [A, HX, CCR] in
+def JSRe : F24<0xCD, AddrModeExt, (outs), (ins imm16:$w0), "jsr\t$w0", []>;
+
+def : Pat<(HCS08call (i16 tglobaladdr:$dst)), (JSRe tglobaladdr:$dst)>;
+def : Pat<(HCS08call (i16 texternalsym:$dst)), (JSRe texternalsym:$dst)>;

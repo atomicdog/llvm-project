@@ -100,15 +100,130 @@ SDValue HCS08TargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &dl,
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
-  // Phase 0 supports only functions with no incoming arguments.
-  if (!Ins.empty())
-    report_fatal_error("HCS08 argument lowering not yet implemented");
+  if (isVarArg)
+    report_fatal_error("HCS08 varargs not yet implemented");
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  MachineRegisterInfo &RegInfo = MF.getRegInfo();
+
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
+  CCInfo.AnalyzeFormalArguments(Ins, CC_HCS08);
+
+  for (CCValAssign &VA : ArgLocs) {
+    if (!VA.isRegLoc())
+      report_fatal_error("HCS08 stack arguments not yet implemented");
+
+    MVT RegVT = VA.getLocVT();
+    const TargetRegisterClass *RC =
+        RegVT == MVT::i16 ? &HCS08::GR16RegClass : &HCS08::GR8RegClass;
+    Register VReg = RegInfo.createVirtualRegister(RC);
+    RegInfo.addLiveIn(VA.getLocReg(), VReg);
+    SDValue Val = DAG.getCopyFromReg(Chain, dl, VReg, RegVT);
+
+    // The only widening we do is i1 -> i8; truncate it back.
+    if (VA.getLocInfo() != CCValAssign::Full)
+      Val = DAG.getNode(ISD::TRUNCATE, dl, VA.getValVT(), Val);
+
+    InVals.push_back(Val);
+  }
   return Chain;
 }
 
 SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                                        SmallVectorImpl<SDValue> &InVals) const {
-  report_fatal_error("HCS08 call lowering not yet implemented");
+  SelectionDAG &DAG = CLI.DAG;
+  SDLoc &dl = CLI.DL;
+  SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
+  SmallVectorImpl<SDValue> &OutVals = CLI.OutVals;
+  SmallVectorImpl<ISD::InputArg> &Ins = CLI.Ins;
+  SDValue Chain = CLI.Chain;
+  SDValue Callee = CLI.Callee;
+  CallingConv::ID CallConv = CLI.CallConv;
+  bool isVarArg = CLI.IsVarArg;
+  CLI.IsTailCall = false;
+
+  if (isVarArg)
+    report_fatal_error("HCS08 varargs not yet implemented");
+
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(), ArgLocs,
+                 *DAG.getContext());
+  CCInfo.AnalyzeCallOperands(Outs, CC_HCS08);
+  unsigned NumBytes = CCInfo.getStackSize();
+
+  Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
+
+  SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
+  for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+    CCValAssign &VA = ArgLocs[i];
+    SDValue Arg = OutVals[i];
+    switch (VA.getLocInfo()) {
+    case CCValAssign::Full:
+      break;
+    case CCValAssign::SExt:
+      Arg = DAG.getNode(ISD::SIGN_EXTEND, dl, VA.getLocVT(), Arg);
+      break;
+    case CCValAssign::ZExt:
+      Arg = DAG.getNode(ISD::ZERO_EXTEND, dl, VA.getLocVT(), Arg);
+      break;
+    case CCValAssign::AExt:
+      Arg = DAG.getNode(ISD::ANY_EXTEND, dl, VA.getLocVT(), Arg);
+      break;
+    default:
+      report_fatal_error("unsupported argument location info");
+    }
+    if (!VA.isRegLoc())
+      report_fatal_error("HCS08 stack call arguments not yet implemented");
+    RegsToPass.push_back({VA.getLocReg(), Arg});
+  }
+
+  SDValue InGlue;
+  for (auto &RP : RegsToPass) {
+    Chain = DAG.getCopyToReg(Chain, dl, RP.first, RP.second, InGlue);
+    InGlue = Chain.getValue(1);
+  }
+
+  if (auto *G = dyn_cast<GlobalAddressSDNode>(Callee))
+    Callee = DAG.getTargetGlobalAddress(G->getGlobal(), dl, MVT::i16);
+  else if (auto *E = dyn_cast<ExternalSymbolSDNode>(Callee))
+    Callee = DAG.getTargetExternalSymbol(E->getSymbol(), MVT::i16);
+
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+  SmallVector<SDValue, 8> Ops;
+  Ops.push_back(Chain);
+  Ops.push_back(Callee);
+  for (auto &RP : RegsToPass)
+    Ops.push_back(DAG.getRegister(RP.first, RP.second.getValueType()));
+  if (InGlue.getNode())
+    Ops.push_back(InGlue);
+
+  Chain = DAG.getNode(HCS08ISD::CALL, dl, NodeTys, Ops);
+  InGlue = Chain.getValue(1);
+
+  Chain = DAG.getCALLSEQ_END(Chain, NumBytes, 0, InGlue, dl);
+  InGlue = Chain.getValue(1);
+
+  return LowerCallResult(Chain, InGlue, CallConv, isVarArg, Ins, dl, DAG,
+                         InVals);
+}
+
+SDValue HCS08TargetLowering::LowerCallResult(
+    SDValue Chain, SDValue InGlue, CallingConv::ID CallConv, bool isVarArg,
+    const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &dl,
+    SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
+  SmallVector<CCValAssign, 16> RVLocs;
+  CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(), RVLocs,
+                 *DAG.getContext());
+  CCInfo.AnalyzeCallResult(Ins, RetCC_HCS08);
+
+  for (CCValAssign &VA : RVLocs) {
+    Chain = DAG.getCopyFromReg(Chain, dl, VA.getLocReg(), VA.getValVT(), InGlue)
+                .getValue(1);
+    InGlue = Chain.getValue(2);
+    InVals.push_back(Chain.getValue(0));
+  }
+  return Chain;
 }
 
 bool HCS08TargetLowering::CanLowerReturn(

@@ -55,5 +55,10 @@ void HCS08FrameLowering::emitEpilogue(MachineFunction &MF,
 MachineBasicBlock::iterator HCS08FrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator I) const {
+  // The call frame is reserved, so the markers just disappear.
   return MBB.erase(I);
+}
+
+bool HCS08FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const {
+  return true;
 }

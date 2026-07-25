@@ -20,7 +20,10 @@ def RetCC_HCS08 : CallingConv<[
 
 def CC_HCS08 : CallingConv<[
   CCIfType<[i1], CCPromoteToType<i8>>,
-  // Bring-up: everything on the stack, one slot per byte, byte aligned.
+  // The first byte-sized argument is passed in A and the first word-sized one
+  // in H:X; anything past that goes on the stack, one slot per byte.
+  CCIfType<[i8],  CCAssignToReg<[A]>>,
+  CCIfType<[i16], CCAssignToReg<[HX]>>,
   CCIfType<[i8],  CCAssignToStack<1, 1>>,
   CCIfType<[i16], CCAssignToStack<2, 1>>
 ]>;

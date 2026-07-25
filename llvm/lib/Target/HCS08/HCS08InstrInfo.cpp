@@ -20,7 +20,9 @@ using namespace llvm;
 void HCS08InstrInfo::anchor() {}
 
 HCS08InstrInfo::HCS08InstrInfo(const HCS08Subtarget &STI)
-    : HCS08GenInstrInfo(STI, RI), RI() {}
+    : HCS08GenInstrInfo(STI, RI, HCS08::ADJCALLSTACKDOWN,
+                        HCS08::ADJCALLSTACKUP),
+      RI() {}
 
 void HCS08InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator I,

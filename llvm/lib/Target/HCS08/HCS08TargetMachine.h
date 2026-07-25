@@ -8,20 +8,13 @@
 //
 // The HCS08 target machine.
 //
-// Code generation is not implemented. This exists so that the target is
-// reachable through the normal TargetMachine plumbing (which is also what
-// causes TableGen to run for the target) and so that tools can ask for the
-// HCS08 data layout. Anything that tries to emit code through it will fail
-// for lack of a subtarget; the register model, calling convention and
-// GlobalISel pipeline are the next milestone.
-//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_LIB_TARGET_HCS08_HCS08TARGETMACHINE_H
 #define LLVM_LIB_TARGET_HCS08_HCS08TARGETMACHINE_H
 
+#include "HCS08Subtarget.h"
 #include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
-#include "llvm/Target/TargetMachine.h"
 #include <memory>
 #include <optional>
 
@@ -31,14 +24,25 @@ class TargetLoweringObjectFile;
 
 class HCS08TargetMachine : public CodeGenTargetMachineImpl {
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
+  HCS08Subtarget Subtarget;
 
 public:
   HCS08TargetMachine(const Target &T, const Triple &TT, StringRef CPU,
-                      StringRef FS, const TargetOptions &Options,
-                      std::optional<Reloc::Model> RM,
-                      std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
-                      bool JIT);
+                     StringRef FS, const TargetOptions &Options,
+                     std::optional<Reloc::Model> RM,
+                     std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
+                     bool JIT);
   ~HCS08TargetMachine() override;
+
+  const HCS08Subtarget *getSubtargetImpl(const Function &F) const override {
+    return &Subtarget;
+  }
+
+  TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
+
+  MachineFunctionInfo *
+  createMachineFunctionInfo(BumpPtrAllocator &Allocator, const Function &F,
+                            const TargetSubtargetInfo *STI) const override;
 
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();

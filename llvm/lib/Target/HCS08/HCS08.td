@@ -39,6 +39,7 @@ def : Proc<"hcs08", [FeatureHCS08]>;
 //===----------------------------------------------------------------------===//
 
 include "HCS08RegisterInfo.td"
+include "HCS08CallingConv.td"
 include "HCS08InstrInfo.td"
 
 // Pointers are 16 bit, so the target-independent pseudo instructions that take

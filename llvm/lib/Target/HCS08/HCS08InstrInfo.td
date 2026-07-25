@@ -19,6 +19,14 @@
 include "HCS08InstrFormats.td"
 
 //===----------------------------------------------------------------------===//
+// HCS08-specific DAG nodes (code generation).
+//===----------------------------------------------------------------------===//
+
+// Return with an optional glue operand, matched onto RTS.
+def HCS08retglue : SDNode<"HCS08ISD::RET_GLUE", SDTNone,
+                          [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+
+//===----------------------------------------------------------------------===//
 // Operands
 //===----------------------------------------------------------------------===//
 
@@ -346,3 +354,10 @@ let hasSideEffects = 0 in
 def NOP  : Inherent<0x9D, "nop">;
 
 def TXA  : Inherent<0x9F, "txa">;
+
+//===----------------------------------------------------------------------===//
+// Code generation patterns
+//===----------------------------------------------------------------------===//
+
+// A function return lowers to RTS.
+def : Pat<(HCS08retglue), (RTS)>;

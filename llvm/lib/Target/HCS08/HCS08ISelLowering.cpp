@@ -8,10 +8,12 @@
 
 #include "HCS08ISelLowering.h"
 #include "HCS08.h"
+#include "HCS08MachineFunctionInfo.h"
 #include "HCS08SelectionDAGInfo.h"
 #include "HCS08Subtarget.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -61,6 +63,50 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
   default:
     llvm_unreachable("unimplemented operation lowering");
   }
+}
+
+MachineBasicBlock *
+HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+                                                 MachineBasicBlock *MBB) const {
+  unsigned SpOpc;
+  switch (MI.getOpcode()) {
+  case HCS08::ADD8rr: SpOpc = HCS08::ADD8sp; break;
+  case HCS08::SUB8rr: SpOpc = HCS08::SUB8sp; break;
+  case HCS08::AND8rr: SpOpc = HCS08::AND8sp; break;
+  case HCS08::ORA8rr: SpOpc = HCS08::ORA8sp; break;
+  case HCS08::EOR8rr: SpOpc = HCS08::EOR8sp; break;
+  default:
+    llvm_unreachable("unexpected instruction for the custom inserter");
+  }
+
+  // HCS08 has no register/register ALU, and A is the only allocatable 8-bit
+  // register, so the second source has to be in memory: give it a slot of its
+  // own and read it back from there. Doing this before register allocation is
+  // what makes it reliable - the allocator then never has to hold two 8-bit
+  // values at once, and only has to spill the tied source across the store.
+  MachineFunction &MF = *MBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  int FI = FuncInfo->getALUTempFI();
+  if (FI == -1) {
+    FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
+    FuncInfo->setALUTempFI(FI);
+  }
+
+  BuildMI(*MBB, MI, DL, TII.get(HCS08::STAsp))
+      .add(MI.getOperand(2)) // second source
+      .addFrameIndex(FI)
+      .addImm(0);
+  BuildMI(*MBB, MI, DL, TII.get(SpOpc))
+      .add(MI.getOperand(0)) // destination
+      .add(MI.getOperand(1)) // first source, tied to the destination
+      .addFrameIndex(FI)
+      .addImm(0);
+
+  MI.eraseFromParent();
+  return MBB;
 }
 
 SDValue HCS08TargetLowering::LowerShift(SDValue Op, SelectionDAG &DAG) const {

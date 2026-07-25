@@ -20,9 +20,19 @@ namespace llvm {
 class HCS08MachineFunctionInfo : public MachineFunctionInfo {
   virtual void anchor();
 
+  /// Frame index of the byte the reg-reg ALU expansion parks its second
+  /// operand in, or -1 if the function has no such expansion. One slot serves
+  /// the whole function: each expansion writes it and reads it back in the
+  /// next instruction, so no two uses are ever live at once, and a slot per
+  /// expansion would eat the 255-byte frame a byte at a time.
+  int ALUTempFI = -1;
+
 public:
   HCS08MachineFunctionInfo() = default;
   HCS08MachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI) {}
+
+  int getALUTempFI() const { return ALUTempFI; }
+  void setALUTempFI(int FI) { ALUTempFI = FI; }
 
   MachineFunctionInfo *
   clone(BumpPtrAllocator &Allocator, MachineFunction &DestMF,

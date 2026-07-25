@@ -16,6 +16,8 @@
 #include "TargetInfo/HCS08TargetInfo.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -70,6 +72,17 @@ bool HCS08AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
 }
 
 void HCS08AsmPrinter::emitInstruction(const MachineInstr *MI) {
+  // A pseudo that reaches here has no encoding and an empty asm string, so it
+  // would print as a blank line and silently drop whatever it stood for. This
+  // target leans on pseudos that later passes expand, so refuse loudly rather
+  // than emit nothing. (The generic pseudos - DBG_*, KILL, IMPLICIT_DEF and
+  // friends - are handled by AsmPrinter before it gets here.)
+  if (MI->isPseudo()) {
+    const TargetInstrInfo &TII = *MF->getSubtarget().getInstrInfo();
+    report_fatal_error("HCS08 pseudo-instruction survived to the asm printer: " +
+                       TII.getName(MI->getOpcode()));
+  }
+
   HCS08MCInstLower MCInstLowering(OutContext, *this);
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);

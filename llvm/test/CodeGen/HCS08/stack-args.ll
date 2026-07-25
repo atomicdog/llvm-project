@@ -20,22 +20,26 @@ define i8 @callee_noframe(i8 %a, i8 %b, i8 %c) {
   ret i8 %c
 }
 
-; The same arguments seen through a frame: every offset moves up by the frame
-; size, which here is the spill slot the reg-reg add needs.
+; Adding two stack arguments needs no frame either: one is loaded into A and
+; the other is read in place by the stack form of the ALU op.
 define i8 @callee_leaf(i8 %a, i8 %b, i8 %c) {
 ; CHECK-LABEL: callee_leaf:
-; CHECK:       ais #$ff
-; CHECK:       lda $05,sp
-; CHECK:       lda $04,sp
+; CHECK-NOT:   ais
+; CHECK:       lda $03,sp
+; CHECK-NEXT:  add $04,sp
+; CHECK-NEXT:  rts
   %t = add i8 %b, %c
   ret i8 %t
 }
 
+; The same arguments seen through a frame: every offset moves up by the frame
+; size. Here that is the register argument's spill slot plus the byte the
+; reg-reg add expansion parks its second operand in.
 define i8 @callee_framed(i8 %a, i8 %b, i8 %c) {
 ; CHECK-LABEL: callee_framed:
-; CHECK:       ais #$fe
+; CHECK:       ais #$fd
 ; CHECK:       lda $06,sp
-; CHECK:       lda $05,sp
+; CHECK-NEXT:  add $07,sp
   %t = add i8 %b, %c
   %u = add i8 %t, %a
   ret i8 %u
@@ -84,7 +88,7 @@ define i8 @live_across_call(i8 %x) {
 ; CHECK:       ais #$fd
 ; CHECK:       sta $03,sp
 ; CHECK:       jsr callee_leaf
-; CHECK:       lda $03,sp
+; CHECK:       add $03,sp
 ; CHECK:       ais #$03
   %p = alloca i8
   store i8 %x, ptr %p

@@ -490,14 +490,18 @@ multiclass ALU8<bits<8> immop, bits<8> extop, bits<8> spop, string m,
                   [(set GR8:$dst,
                         (op GR8:$src,
                             (load (HCS08Wrapper tglobaladdr:$w0))))]>;
-    // Stack-relative form; the fold target for the reg-reg pseudo below.
+    // Stack-relative form: the second operand comes from a frame object,
+    // which covers incoming stack arguments and allocas directly.
     let mayLoad = 1 in
     def sp : F24P<spop, AddrModeSp1, (outs GR8:$dst),
-                  (ins GR8:$src, spmem:$b0), m # "\t$b0", []>;
-    // Reg-reg pseudo. HCS08 has no reg-reg ALU, so this is always folded to
-    // the stack form by foldMemoryOperandImpl once the second source is
-    // spilled (which it must be, since A is the only 8-bit register).
-    let isPseudo = 1 in
+                  (ins GR8:$src, spmem:$b0), m # "\t$b0",
+                  [(set GR8:$dst, (op GR8:$src, (load stackaddr:$b0)))]>;
+    // Reg-reg fallback, for a second operand that is genuinely in a register
+    // (a call result, say). HCS08 has no reg-reg ALU and A is the only 8-bit
+    // register, so this cannot be emitted: EmitInstrWithCustomInserter gives
+    // the second source a stack slot and rewrites it to the sp form above,
+    // before register allocation has to find two registers for it.
+    let isPseudo = 1, usesCustomInserter = 1 in
     def rr : HCS08Inst<0, AddrModeNone, (outs GR8:$dst),
                        (ins GR8:$src, GR8:$src2), "",
                        [(set GR8:$dst, (op GR8:$src, GR8:$src2))]>;

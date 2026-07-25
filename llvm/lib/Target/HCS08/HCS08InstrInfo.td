@@ -942,6 +942,28 @@ def BLEcc : BranchCC<0x93, "ble", [NZV]>;
 def BMIcc : BranchCC<0x2B, "bmi", [NZV]>;
 def BPLcc : BranchCC<0x2A, "bpl", [NZV]>;
 
+// A flag-setting instruction and the branch that reads it, held together as
+// one instruction until after register allocation.
+//
+// They have to be inseparable rather than merely adjacent. Every reload on
+// this machine is an lda, which sets N and Z, and register allocation inserts
+// reloads without consulting the liveness of a reserved register - LLVM
+// assumes throughout that spill code does not clobber flags. A value live out
+// of a loop latch is reloaded at the end of the block, which is exactly
+// between the compare and the branch, and the branch then tests the reload.
+//
+// The operands are the branch opcode, the flag-setting opcode, the
+// destination, and then whatever operands that flag-setting instruction had -
+// variadic, so that one pseudo covers every addressing mode of every compare.
+// mayLoad and mayStore because the folded instruction may be either: a compare
+// against a frame slot reads memory, and the decrement a countdown loop ends
+// with reads and writes it.
+let isPseudo = 1, isCodeGenOnly = 1, isBranch = 1, isTerminator = 1,
+    Defs = [NZV, C], hasSideEffects = 0, mayLoad = 1, mayStore = 1 in
+def CMPBR : HCS08Inst<6, AddrModeNone, (outs),
+                      (ins i16imm:$brop, i16imm:$cmpop, brtarget2:$dst,
+                       variable_ops), "", []>;
+
 // Unconditional branch, custom-selected from ISD::BR (see HCS08ISelDAGToDAG).
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in
 def BRAcc : F16<0x20, AddrModeRel, (outs), (ins brtarget2:$b0), "bra\t$b0", []>;

@@ -48,6 +48,7 @@ public:
   }
 
   bool addInstSelector() override;
+  void addPreRegAlloc() override;
 };
 } // namespace
 
@@ -65,6 +66,12 @@ MachineFunctionInfo *HCS08TargetMachine::createMachineFunctionInfo(
 bool HCS08PassConfig::addInstSelector() {
   addPass(createHCS08ISelDag(getHCS08TargetMachine(), getOptLevel()));
   return false;
+}
+
+void HCS08PassConfig::addPreRegAlloc() {
+  // Has to run before allocation, which is what would otherwise put a reload
+  // between a compare and its branch.
+  addPass(createHCS08FuseCompareBranchPass());
 }
 
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeHCS08Target() {

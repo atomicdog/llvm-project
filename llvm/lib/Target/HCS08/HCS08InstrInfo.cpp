@@ -132,6 +132,26 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MI.eraseFromParent();
     return true;
   }
+  case HCS08::CMPBR: {
+    // Split back into the flag-setting instruction and its branch, now that
+    // there is no allocator left to put anything between them. The operands
+    // are the branch opcode, the flag-setting opcode, the destination, and
+    // then whatever that instruction's own operands were.
+    MachineBasicBlock &MBB = *MI.getParent();
+    DebugLoc DL = MI.getDebugLoc();
+    unsigned BrOpc = MI.getOperand(0).getImm();
+    unsigned FlagsOpc = MI.getOperand(1).getImm();
+    MachineBasicBlock *Dest = MI.getOperand(2).getMBB();
+
+    auto Flags = BuildMI(MBB, MI, DL, get(FlagsOpc));
+    for (unsigned I = 3, E = MI.getNumExplicitOperands(); I != E; ++I)
+      Flags.add(MI.getOperand(I));
+    Flags.cloneMemRefs(MI);
+    BuildMI(MBB, MI, DL, get(BrOpc)).addMBB(Dest);
+
+    MI.eraseFromParent();
+    return true;
+  }
   case HCS08::FRAMEADDR: {
     // The frame index is an SP-relative displacement by now, and n,sp means
     // SP+n, so the address wanted is SP+Disp. tsx gets to SP+1; aix walks the
@@ -198,7 +218,7 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   return true;
 }
 
-static bool isCondBranchOpc(unsigned Opc) {
+bool HCS08InstrInfo::isCondBranchOpcode(unsigned Opc) {
   switch (Opc) {
   case HCS08::BEQcc:
   case HCS08::BNEcc:
@@ -255,7 +275,7 @@ bool HCS08InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
       TBB = LastInst->getOperand(0).getMBB();
       return false;
     }
-    if (isCondBranchOpc(LastOpc)) {
+    if (HCS08InstrInfo::isCondBranchOpcode(LastOpc)) {
       TBB = LastInst->getOperand(0).getMBB();
       Cond.push_back(MachineOperand::CreateImm(LastOpc));
       return false;
@@ -267,7 +287,7 @@ bool HCS08InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
   unsigned SecondLastOpc = SecondLastInst->getOpcode();
 
   // Conditional branch followed by an unconditional branch.
-  if (isCondBranchOpc(SecondLastOpc) && LastOpc == HCS08::BRAcc) {
+  if (HCS08InstrInfo::isCondBranchOpcode(SecondLastOpc) && LastOpc == HCS08::BRAcc) {
     TBB = SecondLastInst->getOperand(0).getMBB();
     Cond.push_back(MachineOperand::CreateImm(SecondLastOpc));
     FBB = LastInst->getOperand(0).getMBB();
@@ -292,7 +312,7 @@ unsigned HCS08InstrInfo::removeBranch(MachineBasicBlock &MBB,
   MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
   unsigned Count = 0;
   while (I != MBB.begin()) {
-    if (I->getOpcode() != HCS08::BRAcc && !isCondBranchOpc(I->getOpcode()))
+    if (I->getOpcode() != HCS08::BRAcc && !HCS08InstrInfo::isCondBranchOpcode(I->getOpcode()))
       break;
     MachineBasicBlock::iterator ToDelete = I;
     --I;

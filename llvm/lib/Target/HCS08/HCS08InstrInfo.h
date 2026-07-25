@@ -31,6 +31,9 @@ public:
   /// The conditional branch that tests a HCS08CC::CondCode.
   static unsigned getCondBranchOpcode(unsigned CC);
 
+  /// Is this one of those conditional branches?
+  static bool isCondBranchOpcode(unsigned Opc);
+
   void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                    const DebugLoc &DL, Register DestReg, Register SrcReg,
                    bool KillSrc, bool RenamableDest = false,

@@ -40,8 +40,13 @@ class PassRegistry;
 FunctionPass *createHCS08ISelDag(HCS08TargetMachine &TM,
                                  CodeGenOptLevel OptLevel);
 
+/// Holds a conditional branch together with the instruction that set the flags
+/// it reads, so that register allocation cannot insert a reload between them.
+FunctionPass *createHCS08FuseCompareBranchPass();
+
 void initializeHCS08DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeHCS08AsmPrinterPass(PassRegistry &);
+void initializeHCS08FuseCompareBranchPass(PassRegistry &);
 
 } // namespace llvm
 

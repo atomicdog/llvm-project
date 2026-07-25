@@ -250,7 +250,7 @@ Where it diverged from the plan above:
   while the compare-and-branch needs the first. With them separate, both are
   in the machine IR and the verifier checks them.
 
-## 14. Known miscompile: a reload between a compare and its branch
+## 14. A branch has to be welded to its compare
 
 Saying the truth in the machine IR turns out not to be enough. Register
 allocation inserts spill and reload code without consulting the liveness of a
@@ -258,29 +258,29 @@ reserved physical register, because LLVM assumes throughout that spill code
 does not clobber flags. Here it does: every reload is an `lda`, and `lda` sets
 N and Z.
 
-A loop whose carried value is live out of the latch is enough to trigger it -
-the reload is placed at the end of the block, which is between the compare and
-the branch:
+A loop whose carried value is live out of the latch was enough. The reload
+went at the end of the block, which is between the compare and the branch, and
+the branch tested the reload:
 
-    aix  #$01
     lda  $03,sp
     cmp  #$01
     lda  $07,sp      <- reload of the loop-carried value
-    bne  .LBB0_10    <- tests the reload, not the compare
+    bne  .LBB0_10    <- tested the reload, not the compare
 
-The loop then never exits. `while (n--) { if (*p > m) m = *p; p++; }` compiles
-to exactly this.
+`while (n--) { if (*p > m) m = *p; p++; }` compiled to exactly that and never
+terminated.
 
-Moving either instruction is not a fix: the compare needs A to hold the
-counter and the reload needs A to hold the carried value, so they cannot be
-reordered, and the branch cannot be separated from the compare. The fix is to
-stop them being separable - fuse the compare and the branch into one pseudo
-and expand it after register allocation, the way the 16-bit carry chain is
-already handled. That makes the operands explicit, so the allocator places the
-reload after the fused instruction rather than inside it.
+Neither instruction could be moved - the compare needs the accumulator for the
+value being compared and the reload needs it for something else - so the fix
+was to leave no gap. `HCS08FuseCompareBranch` merges the two into one CMPBR
+before allocation and `expandPostRAPseudo` splits them again afterwards. The
+pseudo is variadic, carrying the branch opcode, the flag-setting opcode and
+that instruction's own operands, so one of them covers every addressing mode
+of every compare - and the countdown a variable shift ends with, which has the
+same shape.
 
-Until then, any loop of this shape is wrong. This is the most important open
-item in the backend.
+With the operands explicit, the allocator puts the reload *before* the fused
+instruction, which is where it belonged.
 
 ## Bottom line
 

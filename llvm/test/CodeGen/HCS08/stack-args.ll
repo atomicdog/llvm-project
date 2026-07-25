@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: arguments that do not fit the two argument registers. CC_HCS08 puts
 ; the first i8 in A and the first i16 in H:X; everything after that goes in the

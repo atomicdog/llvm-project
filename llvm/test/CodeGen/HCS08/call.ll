@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: calls and the register-based calling convention. The first i8
 ; argument is passed in A and the i8 result returned in A, so an identity

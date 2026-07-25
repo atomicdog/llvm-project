@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: 16-bit add/sub of a signed-byte constant to the index register maps
 ; to a single aix (pointer arithmetic). Subtraction is add of the negated

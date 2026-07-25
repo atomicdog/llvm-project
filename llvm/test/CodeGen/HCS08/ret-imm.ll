@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: materialize an integer constant into the return register and return.
 ; An i8 result goes in the accumulator A, an i16 result in the index pair H:X.

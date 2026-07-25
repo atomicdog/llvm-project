@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: 8-bit ALU on the accumulator. Operations set the condition codes and
 ; take an immediate or an extended (memory) operand. Commutative operations are

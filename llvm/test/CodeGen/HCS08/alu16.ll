@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: the general 16-bit ALU. There is no 16-bit ALU on this machine
 ; beyond aix, so these become byte chains through A, low byte first so that add

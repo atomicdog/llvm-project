@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: changing width between i8 and i16. The two registers are the two
 ; widths, so these are transfers rather than arithmetic: X is the low half of

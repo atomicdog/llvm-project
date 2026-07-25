@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: register/register ALU. HCS08 has no reg-reg arithmetic and A is the
 ; only allocatable 8-bit register, so the second operand always has to come

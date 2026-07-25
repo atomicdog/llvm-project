@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: stack frames and register spilling. With A the only allocatable
 ; 8-bit register, a value live across a reuse of A is spilled to a stack slot

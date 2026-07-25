@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: load and store of a global through 16-bit extended addressing. The
 ; global reference becomes an R_HCS08_16 relocation at assembly time.

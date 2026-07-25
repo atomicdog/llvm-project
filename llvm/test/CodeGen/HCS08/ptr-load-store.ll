@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: dereferencing a pointer. H:X is the only index register, so it holds
 ; the pointer; a constant displacement folds into the n,x or nn,x form rather

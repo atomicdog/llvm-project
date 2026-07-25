@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: 16-bit comparisons. cphx compares the whole of H:X at once, so
 ; unlike a 16-bit addition this needs no byte chain - only an operand in

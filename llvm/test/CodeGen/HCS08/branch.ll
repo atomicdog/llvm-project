@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: integer compare and conditional branch. The compare sets the
 ; condition codes and the branch reads them; branch analysis lets the taken

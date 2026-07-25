@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=hcs08 < %s | FileCheck %s
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | FileCheck %s
 
 ; Phase 1: the 8-bit ALU shifts one bit at a time, so a constant shift unrolls
 ; to that many single-bit accumulator shifts.

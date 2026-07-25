@@ -73,10 +73,15 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
     setOperationAction(Op, MVT::i16, LibCall);
   for (auto Op : {ISD::SDIV, ISD::SREM})
     setOperationAction(Op, MVT::i8, LibCall);
-  setOperationAction(ISD::MULHU, MVT::i8, Expand);
-  setOperationAction(ISD::MULHS, MVT::i8, Expand);
-  setOperationAction(ISD::UMUL_LOHI, MVT::i8, Expand);
-  setOperationAction(ISD::SMUL_LOHI, MVT::i8, Expand);
+  // Nothing produces the high half of a product, and nothing shifts a value
+  // wider than a word, so an operation on a wider type has to become a call
+  // rather than a chain of narrower ones.
+  for (MVT VT : {MVT::i8, MVT::i16}) {
+    for (auto Op : {ISD::MULHU, ISD::MULHS, ISD::UMUL_LOHI, ISD::SMUL_LOHI})
+      setOperationAction(Op, VT, Expand);
+    for (auto Op : {ISD::SHL_PARTS, ISD::SRA_PARTS, ISD::SRL_PARTS})
+      setOperationAction(Op, VT, Expand);
+  }
 
   // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
   setOperationAction(ISD::SHL, MVT::i8, Custom);

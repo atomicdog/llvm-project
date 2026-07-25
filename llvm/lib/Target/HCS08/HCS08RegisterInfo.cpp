@@ -31,7 +31,8 @@ BitVector HCS08RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(HCS08::SP);
   Reserved.set(HCS08::PC);
-  Reserved.set(HCS08::CCR);
+  Reserved.set(HCS08::NZV);
+  Reserved.set(HCS08::C);
   return Reserved;
 }
 

@@ -97,15 +97,37 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MachineBasicBlock &MBB = *MI.getParent();
     DebugLoc DL = MI.getDebugLoc();
 
-    BuildMI(MBB, MI, DL, get(HCS08::TAX));
+    // These are the assembler's accumulator-implicit forms, so what they read
+    // and write has to be spelled out here: between them tax and clrh (or
+    // pulh) define both halves of H:X, which is what the pseudo promised.
+    auto Def = RegState::Define | RegState::Implicit;
+    BuildMI(MBB, MI, DL, get(HCS08::TAX))
+        .addReg(HCS08::X, Def)
+        .addReg(HCS08::A, RegState::Implicit);
     if (MI.getOpcode() == HCS08::ZEXT8to16) {
-      BuildMI(MBB, MI, DL, get(HCS08::CLRH));
+      BuildMI(MBB, MI, DL, get(HCS08::CLRH)).addReg(HCS08::H, Def);
     } else {
-      BuildMI(MBB, MI, DL, get(HCS08::LSLA));
-      BuildMI(MBB, MI, DL, get(HCS08::CLRA));
-      BuildMI(MBB, MI, DL, get(HCS08::SBC_imm)).addImm(0);
-      BuildMI(MBB, MI, DL, get(HCS08::PSHA));
-      BuildMI(MBB, MI, DL, get(HCS08::PULH));
+      // lsla shifts the sign bit into the carry...
+      BuildMI(MBB, MI, DL, get(HCS08::LSLA))
+          .addReg(HCS08::A, Def)
+          .addReg(HCS08::NZV, Def)
+          .addReg(HCS08::C, Def)
+          .addReg(HCS08::A, RegState::Implicit);
+      // ...and clra deliberately does not disturb it, which is the only
+      // reason the carry is still there for the sbc below.
+      BuildMI(MBB, MI, DL, get(HCS08::CLRA))
+          .addReg(HCS08::A, Def)
+          .addReg(HCS08::NZV, Def);
+      BuildMI(MBB, MI, DL, get(HCS08::SBC_imm))
+          .addImm(0)
+          .addReg(HCS08::A, Def)
+          .addReg(HCS08::NZV, Def)
+          .addReg(HCS08::C, Def)
+          .addReg(HCS08::A, RegState::Implicit)
+          .addReg(HCS08::C, RegState::Implicit);
+      BuildMI(MBB, MI, DL, get(HCS08::PSHA))
+          .addReg(HCS08::A, RegState::Implicit);
+      BuildMI(MBB, MI, DL, get(HCS08::PULH)).addReg(HCS08::H, Def);
     }
     MI.eraseFromParent();
     return true;

@@ -37,9 +37,23 @@ let Namespace = "HCS08" in {
 def A   : HCS08Reg<0, "a">;
 def H   : HCS08Reg<1, "h">;
 def X   : HCS08Reg<2, "x">;
-def CCR : HCS08Reg<3, "ccr">;
 def PC  : HCS08Reg<4, "pc">;
 def SP  : HCS08Reg<5, "sp">;
+
+// The condition codes, in the two groups that matter. They are halves of one
+// architectural CCR, but which half an instruction writes is exactly what
+// decides whether a sequence is correct:
+//
+//   NZV  N, Z and V. Written by almost everything that touches a value - a
+//        load and a store included, which is why a compare and its branch
+//        must stay adjacent.
+//   C    the carry, and the half-carry that rides with it. Written only by
+//        the arithmetic that can produce one, so it survives the loads and
+//        stores that a multi-byte add has to interleave with.
+//
+// Modelling them as one register would make the second fact unsayable.
+def NZV : HCS08Reg<3, "nzv">;
+def C   : HCS08Reg<7, "c">;
 
 // The index register is the H:X pair. H is the high byte.
 let SubRegIndices = [sub_hi, sub_lo] in
@@ -59,7 +73,16 @@ def HX : HCS08RegWithSubRegs<6, "hx", [H, X]>;
 def GR8  : RegisterClass<"HCS08", [i8],  8, (add A)>;
 def GR16 : RegisterClass<"HCS08", [i16], 8, (add HX)>;
 
-def CCRC : RegisterClass<"HCS08", [i8], 8, (add CCR)> {
+def CCRC : RegisterClass<"HCS08", [i8], 8, (add NZV, C)> {
+  let CopyCost = -1;
+  let isAllocatable = 0;
+}
+
+// The base of an n,sp operand. It carries a frame index until
+// eliminateFrameIndex rewrites it to SP, which is not a value register and is
+// never allocated - so it needs a class of its own rather than GR16, which is
+// what it used to claim to be.
+def SPBASE : RegisterClass<"HCS08", [i16], 8, (add SP)> {
   let CopyCost = -1;
   let isAllocatable = 0;
 }

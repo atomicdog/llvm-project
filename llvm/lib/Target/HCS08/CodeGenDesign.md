@@ -242,14 +242,13 @@ Where it diverged from the plan above:
   pseudo that survives to the AsmPrinter used to print as a blank line and
   silently drop its operation. The printer now refuses them.
 
-- **CCR is modelled as one register** (§11.2), so an instruction either
-  clobbers all the flags or none. Loads and stores are declared not to touch
-  it, which is a lie about N/Z and the truth about C. Nothing exploits the
-  lie today: the compare and its branch come out of ISel adjacent, and
-  neither of them uses a virtual register, so there is no reason for the
-  allocator to insert anything between them. Splitting CCR into NZV and C, as
-  llvm-mos does, is the principled fix and would make the carry chains safe
-  by construction rather than by inspection.
+- **CCR is two registers, not one** (§11.2 assumed one). `NZV` is written by
+  almost everything that touches a value, loads and stores included; `C` only
+  by arithmetic that can produce a carry. One register could not express
+  both "a load clobbers the flags a branch reads" and "a load does not
+  disturb a carry chain", and the 16-bit add needs the second to be true
+  while the compare-and-branch needs the first. With them separate, both are
+  in the machine IR and the verifier checks them.
 
 ## Bottom line
 

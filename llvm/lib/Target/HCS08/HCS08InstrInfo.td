@@ -131,7 +131,7 @@ def brtarget4 : BranchTarget<"decodeBranchTarget4">;
 // byte displacement. Only the displacement is printed and encoded - "sp" is
 // part of the mnemonic form - so both jobs read past the base operand.
 def spmem : Operand<i16> {
-  let MIOperandInfo = (ops GR16, imm8);
+  let MIOperandInfo = (ops SPBASE, imm8);
   let PrintMethod = "printSPMem";
   let EncoderMethod = "getMemDispOpValue";
 }
@@ -455,7 +455,7 @@ def : Pat<(HCS08retglue), (RTS)>;
 // accumulator-implicit (no register operands); these carry the def register so
 // the selector can model the data flow. They share the real encodings and are
 // excluded from the assembler/disassembler by isCodeGenOnly.
-let isCodeGenOnly = 1, hasSideEffects = 0 in {
+let isCodeGenOnly = 1, hasSideEffects = 0, Defs = [NZV] in {
   def LDAi : F16<0xA6, AddrModeImm, (outs GR8:$dst), (ins imm8:$b0),
                  "lda\t#$b0", [(set GR8:$dst, imm:$b0)]>;
   def LDHXi : F24<0x45, AddrModeImm, (outs GR16:$dst), (ins imm16:$w0),
@@ -464,7 +464,7 @@ let isCodeGenOnly = 1, hasSideEffects = 0 in {
 
 // Extended (16-bit absolute) loads and stores, used for globals. The address
 // is a 16-bit operand; for a symbol it becomes an R_HCS08_16 relocation.
-let isCodeGenOnly = 1 in {
+let isCodeGenOnly = 1, Defs = [NZV] in {
   def LDAext : F24<0xC6, AddrModeExt, (outs GR8:$dst), (ins imm16:$w0),
                    "lda\t$w0",
                    [(set GR8:$dst, (load (HCS08Wrapper tglobaladdr:$w0)))]>;
@@ -497,7 +497,7 @@ def : Pat<(i16 (HCS08Wrapper tglobaladdr:$addr)), (LDHXi tglobaladdr:$addr)>;
 // materialized with aix instead for now.
 //===----------------------------------------------------------------------===//
 
-let isCodeGenOnly = 1, hasSideEffects = 0 in {
+let isCodeGenOnly = 1, hasSideEffects = 0, Defs = [NZV] in {
   let mayLoad = 1 in {
     def LDAix : F8<0xF6, AddrModeIx, (outs GR8:$dst), (ins GR16:$base),
                    "lda\t,x", [(set GR8:$dst, (load ixbase:$base))]>;
@@ -524,7 +524,7 @@ let isCodeGenOnly = 1, hasSideEffects = 0 in {
     // pointer want H:X, so the value is parked in a frame slot and its two
     // bytes are carried through A; see EmitInstrWithCustomInserter. The
     // displacement is a byte, which is why ixaddr stops at 254.
-    let isPseudo = 1, usesCustomInserter = 1, Defs = [CCR] in
+    let isPseudo = 1, usesCustomInserter = 1, Defs = [NZV] in
     def STHXix : HCS08Inst<0, AddrModeNone, (outs), (ins GR16:$src, ixmem:$b0),
                            "", [(store GR16:$src, ixaddr:$b0)]>;
   }
@@ -560,9 +560,9 @@ def : Pat<(add GR16:$src, i16SExt8:$c), (AIXi GR16:$src, (LO8xform $c))>;
 
 // Parameterized on the opcode column, like the MC-layer multiclasses above:
 // the addressing mode is the high nibble, so every form falls out of it.
-multiclass ALU8<bits<4> col, string m, SDNode op> {
+multiclass ALU8<bits<4> col, string m, SDNode op, list<Register> flags> {
   let Constraints = "$src = $dst", isCodeGenOnly = 1, hasSideEffects = 0,
-      Defs = [CCR] in {
+      Defs = flags in {
     def i : F16<{0b1010, col}, AddrModeImm, (outs GR8:$dst),
                 (ins GR8:$src, imm8:$b0), m # "\t#$b0",
                 [(set GR8:$dst, (op GR8:$src, imm:$b0))]>;
@@ -601,18 +601,20 @@ multiclass ALU8<bits<4> col, string m, SDNode op> {
   }
 }
 
-defm ADD8 : ALU8<0xB, "add", add>;
-defm SUB8 : ALU8<0x0, "sub", sub>;
-defm AND8 : ALU8<0x4, "and", and>;
-defm ORA8 : ALU8<0xA, "ora", or>;
-defm EOR8 : ALU8<0x8, "eor", xor>;
+defm ADD8 : ALU8<0xB, "add", add, [NZV, C]>;
+defm SUB8 : ALU8<0x0, "sub", sub, [NZV, C]>;
+defm AND8 : ALU8<0x4, "and", and, [NZV]>;
+defm ORA8 : ALU8<0xA, "ora", or,  [NZV]>;
+defm EOR8 : ALU8<0x8, "eor", xor, [NZV]>;
 
 // The carry-in halves of the 16-bit chains. Nothing selects these directly -
 // they are built by hand in expandPostRAPseudo - so they carry no pattern, but
-// they do read CCR, which is what keeps anything from being scheduled between
-// them and the add or sub that set the carry.
+// they do read C, which is what keeps anything that writes it from being
+// scheduled between them and the add or sub that set it. The loads and stores
+// the chain interleaves with write NZV and not C, so they are free to sit
+// there - which is the whole reason the two are separate registers.
 let isCodeGenOnly = 1, Constraints = "$src = $dst", hasSideEffects = 0,
-    mayLoad = 1, Defs = [CCR], Uses = [CCR] in {
+    mayLoad = 1, Defs = [NZV, C], Uses = [C] in {
   def ADC8sp : F24P<0xE9, AddrModeSp1, (outs GR8:$dst),
                     (ins GR8:$src, spmem:$b0), "adc\t$b0", []>;
   def SBC8sp : F24P<0xE2, AddrModeSp1, (outs GR8:$dst),
@@ -643,7 +645,7 @@ class ALU16rr<SDNode op>
   let isPseudo = 1;
   let isCodeGenOnly = 1;
   let usesCustomInserter = 1;
-  let Defs = [A, CCR];
+  let Defs = [A, NZV, C];
   let hasSideEffects = 0;
 }
 
@@ -664,7 +666,7 @@ class ALU16rm<SDNode op>
   let isPseudo = 1;
   let isCodeGenOnly = 1;
   let usesCustomInserter = 1;
-  let Defs = [A, CCR];
+  let Defs = [A, NZV, C];
   let mayLoad = 1;
   let hasSideEffects = 0;
 }
@@ -682,7 +684,7 @@ class ALU16mem
                 "", []> {
   let isPseudo = 1;
   let isCodeGenOnly = 1;
-  let Defs = [A, CCR];
+  let Defs = [A, NZV, C];
   let mayLoad = 1;
   let mayStore = 1;
   let hasSideEffects = 0;
@@ -707,13 +709,16 @@ let isCodeGenOnly = 1, hasSideEffects = 0 in
 def TXAd : F8<0x9F, AddrModeInh, (outs GR8:$dst), (ins GR16:$src), "txa",
               [(set GR8:$dst, (trunc GR16:$src))]>;
 
-let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0, Defs = [A, CCR] in {
-  // tax then clrh. An any-extend goes the same way rather than leaving H
-  // undefined, which would be a value nothing later is allowed to look at.
+let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
+  // tax then clrh. Neither writes A or any flag, so this clobbers nothing. An
+  // any-extend goes the same way rather than leaving H undefined, which would
+  // be a value nothing later is allowed to look at.
   def ZEXT8to16 : HCS08Inst<2, AddrModeNone, (outs GR16:$dst), (ins GR8:$src),
                             "", []>;
   // tax, then a copy of the sign bit into H, built without branching:
-  // lsla puts it in the carry, and 0 - 0 - carry is 0 or -1.
+  // lsla puts it in the carry, and 0 - 0 - carry is 0 or -1. That walks
+  // through A and both flag groups.
+  let Defs = [A, NZV, C] in
   def SEXT8to16 : HCS08Inst<7, AddrModeNone, (outs GR16:$dst), (ins GR8:$src),
                             "", []>;
 }
@@ -723,13 +728,13 @@ def : Pat<(i16 (anyext GR8:$src)), (ZEXT8to16 GR8:$src)>;
 def : Pat<(i16 (sext GR8:$src)), (SEXT8to16 GR8:$src)>;
 
 // Negate the accumulator.
-let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
+let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [NZV, C],
     hasSideEffects = 0 in
 def NEG8 : F8<0x40, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "nega",
               [(set GR8:$dst, (sub 0, GR8:$src))]>;
 
 // Single-bit accumulator shifts (the row-4 read-modify-write forms).
-let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
+let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [NZV, C],
     hasSideEffects = 0 in {
   def SHL8 : F8<0x48, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "lsla",
                 [(set GR8:$dst, (HCS08shl1 GR8:$src))]>;
@@ -746,7 +751,7 @@ let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
 // cmp A against an immediate or a memory operand, setting the condition codes.
 // Column 1 of the matrix, so the addressing modes follow the same rows as the
 // 8-bit ALU.
-let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
+let Defs = [NZV, C], isCodeGenOnly = 1, hasSideEffects = 0 in {
   def CMP8i : F16<0xA1, AddrModeImm, (outs), (ins GR8:$src, imm8:$b0),
                   "cmp\t#$b0", [(HCS08cmp GR8:$src, imm:$b0)]>;
   def CMP8ext : F24<0xC1, AddrModeExt, (outs), (ins GR8:$src, imm16:$w0),
@@ -774,7 +779,7 @@ let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
 // cphx compares the whole of H:X in one go, so a 16-bit comparison needs no
 // byte chain - unlike a 16-bit addition. There is no indexed form, so a value
 // reached through a pointer goes through the parked form below.
-let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
+let Defs = [NZV, C], isCodeGenOnly = 1, hasSideEffects = 0 in {
   def CMP16i : F24<0x65, AddrModeImm, (outs), (ins GR16:$src, imm16:$w0),
                    "cphx\t#$w0", [(HCS08cmp GR16:$src, imm:$w0)]>;
   def CMP16ext : F24<0x3E, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
@@ -799,7 +804,7 @@ class SelectCC<RegisterClass RC>
   let isPseudo = 1;
   let isCodeGenOnly = 1;
   let usesCustomInserter = 1;
-  let Uses = [CCR];
+  let Uses = [NZV, C];
   let hasSideEffects = 0;
 }
 
@@ -809,22 +814,27 @@ def SELECT16 : SelectCC<GR16>;
 // One conditional branch per condition code. These are pattern-less: a
 // HCS08ISD::BR_CC node is matched to the right one by C++ custom selection in
 // HCS08ISelDAGToDAG (indexed by the HCS08CC condition value). PC-relative.
-let isBranch = 1, isTerminator = 1, isCodeGenOnly = 1, Uses = [CCR] in
-class BranchCC<bits<8> op, string m>
-    : F16<op, AddrModeRel, (outs), (ins brtarget2:$b0), m # "\t$b0", []>;
+// Each reads only the flags its condition actually tests: the unsigned
+// ordered branches are the carry, the signed ones are N against V, and the
+// two that combine them need both.
+let isBranch = 1, isTerminator = 1, isCodeGenOnly = 1 in
+class BranchCC<bits<8> op, string m, list<Register> flags>
+    : F16<op, AddrModeRel, (outs), (ins brtarget2:$b0), m # "\t$b0", []> {
+  let Uses = flags;
+}
 
-def BEQcc : BranchCC<0x27, "beq">;
-def BNEcc : BranchCC<0x26, "bne">;
-def BHScc : BranchCC<0x24, "bcc">;
-def BLOcc : BranchCC<0x25, "bcs">;
-def BHIcc : BranchCC<0x22, "bhi">;
-def BLScc : BranchCC<0x23, "bls">;
-def BGEcc : BranchCC<0x90, "bge">;
-def BLTcc : BranchCC<0x91, "blt">;
-def BGTcc : BranchCC<0x92, "bgt">;
-def BLEcc : BranchCC<0x93, "ble">;
-def BMIcc : BranchCC<0x2B, "bmi">;
-def BPLcc : BranchCC<0x2A, "bpl">;
+def BEQcc : BranchCC<0x27, "beq", [NZV]>;
+def BNEcc : BranchCC<0x26, "bne", [NZV]>;
+def BHScc : BranchCC<0x24, "bcc", [C]>;
+def BLOcc : BranchCC<0x25, "bcs", [C]>;
+def BHIcc : BranchCC<0x22, "bhi", [NZV, C]>;
+def BLScc : BranchCC<0x23, "bls", [NZV, C]>;
+def BGEcc : BranchCC<0x90, "bge", [NZV]>;
+def BLTcc : BranchCC<0x91, "blt", [NZV]>;
+def BGTcc : BranchCC<0x92, "bgt", [NZV]>;
+def BLEcc : BranchCC<0x93, "ble", [NZV]>;
+def BMIcc : BranchCC<0x2B, "bmi", [NZV]>;
+def BPLcc : BranchCC<0x2A, "bpl", [NZV]>;
 
 // Unconditional branch, custom-selected from ISD::BR (see HCS08ISelDAGToDAG).
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in
@@ -839,7 +849,7 @@ def BRAcc : F16<0x20, AddrModeRel, (outs), (ins brtarget2:$b0), "bra\t$b0", []>;
 // displacement by eliminateFrameIndex.
 //===----------------------------------------------------------------------===//
 
-let isCodeGenOnly = 1, Uses = [SP], hasSideEffects = 0 in {
+let isCodeGenOnly = 1, Uses = [SP], hasSideEffects = 0, Defs = [NZV] in {
   let mayLoad = 1 in {
     def LDAsp : F24P<0xE6, AddrModeSp1, (outs GR8:$dst), (ins spmem:$b0),
                      "lda\t$b0", []>;
@@ -888,7 +898,8 @@ def AISi : F16<0xA7, AddrModeImm, (outs), (ins imm8:$b0), "ais\t#$b0", []>;
 // Stores into the outgoing-argument area of the reserved call frame. Unlike
 // STAsp / STHXsp the displacement is already an SP offset, so these never
 // reach eliminateFrameIndex.
-let isCodeGenOnly = 1, Uses = [SP], mayStore = 1, hasSideEffects = 0 in {
+let isCodeGenOnly = 1, Uses = [SP], mayStore = 1, hasSideEffects = 0,
+    Defs = [NZV] in {
   def STAout : F24P<0xE7, AddrModeSp1, (outs), (ins GR8:$src, imm8:$b0),
                     "sta\t$b0,sp", [(store GR8:$src, (HCS08outarg timm:$b0))]>;
   def STHXout : F24P<0xFF, AddrModeSp1, (outs), (ins GR16:$src, imm8:$b0),
@@ -908,7 +919,7 @@ let Defs = [SP], Uses = [SP] in {
 
 // Direct call to a 16-bit absolute address. Clobbers the caller-saved
 // registers; the return value comes back in A / H:X.
-let isCall = 1, isCodeGenOnly = 1, Defs = [A, HX, CCR] in
+let isCall = 1, isCodeGenOnly = 1, Defs = [A, HX, NZV, C] in
 def JSRe : F24<0xCD, AddrModeExt, (outs), (ins imm16:$w0), "jsr\t$w0", []>;
 
 def : Pat<(HCS08call (i16 tglobaladdr:$dst)), (JSRe tglobaladdr:$dst)>;

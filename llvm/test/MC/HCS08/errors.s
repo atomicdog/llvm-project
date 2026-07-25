@@ -24,3 +24,16 @@
 ; 16-bit immediate of ldhx.
 ; CHECK: error: operand must be a 16-bit value or a symbol
 	ldhx	#>sym
+
+; An 8-bit immediate that does not fit in a byte.
+; CHECK: error: operand must be an 8-bit value
+	lda	#$100
+
+; A 16-bit immediate that does not fit in a word.
+; CHECK: error: operand must be a 16-bit value or a symbol
+	ldhx	#$10000
+
+; An indexed displacement wider than 16 bits has no addressing mode. ($100,x
+; would just widen from the 8-bit to the 16-bit displacement form.)
+; CHECK: error: operand must be a 16-bit value or a symbol
+	lda	$10000,x

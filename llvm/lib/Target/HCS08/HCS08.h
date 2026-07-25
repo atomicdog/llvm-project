@@ -12,6 +12,26 @@
 #include "MCTargetDesc/HCS08MCTargetDesc.h"
 #include "llvm/Support/CodeGen.h"
 
+namespace HCS08CC {
+// HCS08 branch condition codes. The value is the operand of a HCS08ISD::BR_CC
+// node and selects the concrete conditional branch instruction.
+enum CondCode {
+  COND_EQ = 0, // beq
+  COND_NE = 1, // bne
+  COND_HS = 2, // bcc  (unsigned >=)
+  COND_LO = 3, // bcs  (unsigned <)
+  COND_HI = 4, // bhi  (unsigned >)
+  COND_LS = 5, // bls  (unsigned <=)
+  COND_GE = 6, // bge  (signed >=)
+  COND_LT = 7, // blt  (signed <)
+  COND_GT = 8, // bgt  (signed >)
+  COND_LE = 9, // ble  (signed <=)
+  COND_MI = 10, // bmi
+  COND_PL = 11, // bpl
+  COND_INVALID = -1
+};
+}
+
 namespace llvm {
 class FunctionPass;
 class HCS08TargetMachine;

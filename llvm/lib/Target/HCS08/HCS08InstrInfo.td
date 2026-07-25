@@ -31,6 +31,14 @@ def HCS08retglue : SDNode<"HCS08ISD::RET_GLUE", SDTNone,
 def SDT_HCS08Wrapper : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>, SDTCisPtrTy<0>]>;
 def HCS08Wrapper : SDNode<"HCS08ISD::Wrapper", SDT_HCS08Wrapper>;
 
+// Compare, setting the condition codes (produces glue), and a conditional
+// branch reading them.
+def SDT_HCS08Cmp  : SDTypeProfile<0, 2, [SDTCisSameAs<0, 1>]>;
+def SDT_HCS08BrCC : SDTypeProfile<0, 2, [SDTCisVT<0, OtherVT>, SDTCisVT<1, i8>]>;
+def HCS08cmp  : SDNode<"HCS08ISD::CMP", SDT_HCS08Cmp, [SDNPOutGlue]>;
+def HCS08brcc : SDNode<"HCS08ISD::BR_CC", SDT_HCS08BrCC,
+                       [SDNPHasChain, SDNPInGlue]>;
+
 //===----------------------------------------------------------------------===//
 // Operands
 //===----------------------------------------------------------------------===//
@@ -426,3 +434,41 @@ defm SUB8 : ALU8<0xA0, 0xC0, "sub", sub>;
 defm AND8 : ALU8<0xA4, 0xC4, "and", and>;
 defm ORA8 : ALU8<0xAA, 0xCA, "ora", or>;
 defm EOR8 : ALU8<0xA8, 0xC8, "eor", xor>;
+
+//===----------------------------------------------------------------------===//
+// Compares and conditional branches (code generation).
+//===----------------------------------------------------------------------===//
+
+// cmp A with an immediate or a memory operand, setting the condition codes.
+let Defs = [CCR], isCodeGenOnly = 1, hasSideEffects = 0 in {
+  def CMP8i : F16<0xA1, AddrModeImm, (outs), (ins GR8:$src, imm8:$b0),
+                  "cmp\t#$b0", [(HCS08cmp GR8:$src, imm:$b0)]>;
+  def CMP8ext : F24<0xC1, AddrModeExt, (outs), (ins GR8:$src, imm16:$w0),
+                    "cmp\t$w0",
+                    [(HCS08cmp GR8:$src,
+                               (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+}
+
+// One conditional branch per condition code. These are pattern-less: a
+// HCS08ISD::BR_CC node is matched to the right one by C++ custom selection in
+// HCS08ISelDAGToDAG (indexed by the HCS08CC condition value). PC-relative.
+let isBranch = 1, isTerminator = 1, isCodeGenOnly = 1, Uses = [CCR] in
+class BranchCC<bits<8> op, string m>
+    : F16<op, AddrModeRel, (outs), (ins brtarget2:$b0), m # "\t$b0", []>;
+
+def BEQcc : BranchCC<0x27, "beq">;
+def BNEcc : BranchCC<0x26, "bne">;
+def BHScc : BranchCC<0x24, "bcc">;
+def BLOcc : BranchCC<0x25, "bcs">;
+def BHIcc : BranchCC<0x22, "bhi">;
+def BLScc : BranchCC<0x23, "bls">;
+def BGEcc : BranchCC<0x90, "bge">;
+def BLTcc : BranchCC<0x91, "blt">;
+def BGTcc : BranchCC<0x92, "bgt">;
+def BLEcc : BranchCC<0x93, "ble">;
+def BMIcc : BranchCC<0x2B, "bmi">;
+def BPLcc : BranchCC<0x2A, "bpl">;
+
+// Unconditional branch, custom-selected from ISD::BR (see HCS08ISelDAGToDAG).
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in
+def BRAcc : F16<0x20, AddrModeRel, (outs), (ins brtarget2:$b0), "bra\t$b0", []>;

@@ -65,6 +65,30 @@ void HCS08DAGToDAGISel::Select(SDNode *Node) {
     return;
   }
 
+  // Unconditional branch. Operands: chain, dest.
+  if (Node->getOpcode() == ISD::BR) {
+    SDValue Chain = Node->getOperand(0);
+    SDValue Dest = Node->getOperand(1);
+    CurDAG->SelectNodeTo(Node, HCS08::BRAcc, MVT::Other, Dest, Chain);
+    return;
+  }
+
+  // A conditional branch carries its HCS08 condition as a constant operand;
+  // pick the matching Bcc instruction. Operands: chain, dest, cc, glue.
+  if (Node->getOpcode() == HCS08ISD::BR_CC) {
+    static const unsigned BccOpc[] = {
+        HCS08::BEQcc, HCS08::BNEcc, HCS08::BHScc, HCS08::BLOcc,
+        HCS08::BHIcc, HCS08::BLScc, HCS08::BGEcc, HCS08::BLTcc,
+        HCS08::BGTcc, HCS08::BLEcc, HCS08::BMIcc, HCS08::BPLcc};
+    unsigned CC = Node->getConstantOperandVal(2);
+    assert(CC < std::size(BccOpc) && "invalid HCS08 condition");
+    SDValue Chain = Node->getOperand(0);
+    SDValue Dest = Node->getOperand(1);
+    SDValue Glue = Node->getOperand(3);
+    CurDAG->SelectNodeTo(Node, BccOpc[CC], MVT::Other, Dest, Chain, Glue);
+    return;
+  }
+
   // Select the default instruction.
   SelectCode(Node);
 }

@@ -35,6 +35,10 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
 
   // A global address is materialized as a wrapped target address.
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
+
+  // Conditional branches go through a compare that sets the condition codes.
+  setOperationAction(ISD::BR_CC, MVT::i8, Custom);
+  setOperationAction(ISD::BRCOND, MVT::Other, Expand);
 }
 
 SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
@@ -42,9 +46,45 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
   switch (Op.getOpcode()) {
   case ISD::GlobalAddress:
     return LowerGlobalAddress(Op, DAG);
+  case ISD::BR_CC:
+    return LowerBR_CC(Op, DAG);
   default:
     llvm_unreachable("unimplemented operation lowering");
   }
+}
+
+// Translate an ISD condition code for an integer compare of A against an
+// operand into the HCS08 branch condition. A is the left-hand side of the
+// compare, so no operand swap is needed.
+static unsigned translateCC(ISD::CondCode CC) {
+  switch (CC) {
+  case ISD::SETEQ:  return HCS08CC::COND_EQ;
+  case ISD::SETNE:  return HCS08CC::COND_NE;
+  case ISD::SETUGE: return HCS08CC::COND_HS;
+  case ISD::SETULT: return HCS08CC::COND_LO;
+  case ISD::SETUGT: return HCS08CC::COND_HI;
+  case ISD::SETULE: return HCS08CC::COND_LS;
+  case ISD::SETGE:  return HCS08CC::COND_GE;
+  case ISD::SETLT:  return HCS08CC::COND_LT;
+  case ISD::SETGT:  return HCS08CC::COND_GT;
+  case ISD::SETLE:  return HCS08CC::COND_LE;
+  default:
+    report_fatal_error("unsupported integer condition code");
+  }
+}
+
+SDValue HCS08TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
+  SDValue Chain = Op.getOperand(0);
+  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(1))->get();
+  SDValue LHS = Op.getOperand(2);
+  SDValue RHS = Op.getOperand(3);
+  SDValue Dest = Op.getOperand(4);
+  SDLoc dl(Op);
+
+  SDValue Flag = DAG.getNode(HCS08ISD::CMP, dl, MVT::Glue, LHS, RHS);
+  SDValue TargetCC = DAG.getConstant(translateCC(CC), dl, MVT::i8);
+  return DAG.getNode(HCS08ISD::BR_CC, dl, MVT::Other, Chain, Dest, TargetCC,
+                     Flag);
 }
 
 SDValue HCS08TargetLowering::LowerGlobalAddress(SDValue Op,

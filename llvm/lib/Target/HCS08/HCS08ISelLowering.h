@@ -28,6 +28,7 @@ public:
 
 private:
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue
   LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,

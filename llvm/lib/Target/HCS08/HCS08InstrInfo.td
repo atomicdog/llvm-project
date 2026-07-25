@@ -433,6 +433,24 @@ let isCodeGenOnly = 1 in {
 // A bare global address (e.g. taking its value into H:X).
 def : Pat<(i16 (HCS08Wrapper tglobaladdr:$addr)), (LDHXi tglobaladdr:$addr)>;
 
+// 16-bit add of a signed-byte constant to H:X (pointer arithmetic): aix #n.
+// AIX does not affect the condition codes. sub-by-constant is canonicalized to
+// add of the negated constant, so it maps here too. General i16 + i16 is not
+// yet supported (it needs a byte-wise carry chain through A).
+def i16SExt8 : PatLeaf<(i16 imm), [{
+  int64_t V = N->getSExtValue();
+  return V >= -128 && V <= 127;
+}]>;
+def LO8xform : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(N->getZExtValue() & 0xFF, SDLoc(N), MVT::i8);
+}]>;
+
+let isCodeGenOnly = 1, Constraints = "$src = $dst", hasSideEffects = 0 in
+def AIXi : F16<0xAF, AddrModeImm, (outs GR16:$dst), (ins GR16:$src, imm8:$b0),
+               "aix\t#$b0", []>;
+
+def : Pat<(add GR16:$src, i16SExt8:$c), (AIXi GR16:$src, (LO8xform $c))>;
+
 //===----------------------------------------------------------------------===//
 // 8-bit accumulator ALU (code generation).
 //

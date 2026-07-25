@@ -19,3 +19,8 @@
 ; Bit numbers are folded into the opcode and only go up to 7.
 ; CHECK: error: bit number must be in the range 0-7
 	bset	8,$10
+
+; A '#>' / '#<' byte selector yields a single byte, so it cannot supply the
+; 16-bit immediate of ldhx.
+; CHECK: error: operand must be a 16-bit value or a symbol
+	ldhx	#>sym

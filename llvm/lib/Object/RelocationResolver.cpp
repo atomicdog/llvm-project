@@ -159,6 +159,8 @@ static bool supportsHCS08(uint64_t Type) {
   switch (Type) {
   case ELF::R_HCS08_8:
   case ELF::R_HCS08_16:
+  case ELF::R_HCS08_HI8:
+  case ELF::R_HCS08_LO8:
     return true;
   default:
     return false;
@@ -169,9 +171,12 @@ static uint64_t resolveHCS08(uint64_t Type, uint64_t Offset, uint64_t S,
                               uint64_t /*LocData*/, int64_t Addend) {
   switch (Type) {
   case ELF::R_HCS08_8:
+  case ELF::R_HCS08_LO8:
     return (S + Addend) & 0xFF;
   case ELF::R_HCS08_16:
     return (S + Addend) & 0xFFFF;
+  case ELF::R_HCS08_HI8:
+    return ((S + Addend) >> 8) & 0xFF;
   default:
     llvm_unreachable("Invalid relocation type");
   }

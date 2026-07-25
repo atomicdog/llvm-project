@@ -75,11 +75,25 @@ public:
   SMLoc getStartLoc() const override { return Start; }
   SMLoc getEndLoc() const override { return End; }
 
+  /// True for a '#>expr' / '#<expr' byte selector, whose result is one byte
+  /// regardless of the width of the inner expression.
+  bool isByteSelect() const {
+    if (Kind != k_Immediate)
+      return false;
+    if (const auto *SE = dyn_cast<MCSpecifierExpr>(Imm))
+      return SE->getSpecifier() == HCS08::S_HI8 ||
+             SE->getSpecifier() == HCS08::S_LO8;
+    return false;
+  }
+
   /// Matches an operand that is known to fit in a byte, which selects the
   /// direct-page and 8-bit-displacement forms.
   bool isUImm8() const {
     if (Kind != k_Immediate)
       return false;
+    // A byte selector always yields a byte.
+    if (isByteSelect())
+      return true;
     int64_t Value;
     if (!Imm->evaluateAsAbsolute(Value))
       return false;
@@ -90,6 +104,9 @@ public:
   /// is not known yet; those always select the extended form.
   bool isUImm16() const {
     if (Kind != k_Immediate)
+      return false;
+    // A byte selector cannot fill a 16-bit field.
+    if (isByteSelect())
       return false;
     int64_t Value;
     if (!Imm->evaluateAsAbsolute(Value))
@@ -197,10 +214,25 @@ bool HCS08AsmParser::parseOperand(OperandVector &Operands, bool BitNumber) {
     Operands.push_back(HCS08Operand::createToken("#", S));
     getParser().Lex();
 
+    // Optional byte selector: '#>expr' takes the high byte of a 16-bit value
+    // and '#<expr' the low byte, emitting R_HCS08_HI8 / R_HCS08_LO8. This is
+    // how a 16-bit address is materialized a byte at a time through the 8-bit
+    // accumulator.
+    uint16_t Spec = HCS08::S_None;
+    if (getLexer().is(AsmToken::Greater)) {
+      Spec = HCS08::S_HI8;
+      getParser().Lex();
+    } else if (getLexer().is(AsmToken::Less)) {
+      Spec = HCS08::S_LO8;
+      getParser().Lex();
+    }
+
     const MCExpr *Val;
     SMLoc ExprLoc = getLexer().getLoc();
     if (getParser().parseExpression(Val))
       return Error(ExprLoc, "expected expression after '#'");
+    if (Spec != HCS08::S_None)
+      Val = MCSpecifierExpr::create(Val, Spec, getParser().getContext(), ExprLoc);
     Operands.push_back(
         HCS08Operand::createImm(Val, ExprLoc, getLexer().getLoc()));
     return false;

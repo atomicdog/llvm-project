@@ -26,6 +26,10 @@ enum Fixups {
   // 8-bit signed PC-relative branch displacement, measured from the end of the
   // instruction.
   fixup_pcrel_8,
+  // High and low byte of a 16-bit value, produced by the '#>expr' and '#<expr'
+  // immediate modifiers.
+  fixup_hi8,
+  fixup_lo8,
 
   // Marker
   LastTargetFixupKind,

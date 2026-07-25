@@ -39,6 +39,10 @@ protected:
       return ELF::R_HCS08_16;
     case HCS08::fixup_pcrel_8:
       return ELF::R_HCS08_PCREL_8;
+    case HCS08::fixup_hi8:
+      return ELF::R_HCS08_HI8;
+    case HCS08::fixup_lo8:
+      return ELF::R_HCS08_LO8;
     default:
       llvm_unreachable("invalid fixup kind");
     }

@@ -7,10 +7,28 @@
 //===----------------------------------------------------------------------===//
 
 #include "HCS08MCAsmInfo.h"
+#include "HCS08MCTargetDesc.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
 void HCS08MCAsmInfo::anchor() {}
+
+void HCS08MCAsmInfo::printSpecifierExpr(raw_ostream &OS,
+                                        const MCSpecifierExpr &Expr) const {
+  switch (Expr.getSpecifier()) {
+  case HCS08::S_HI8:
+    OS << '>';
+    break;
+  case HCS08::S_LO8:
+    OS << '<';
+    break;
+  default:
+    break;
+  }
+  printExpr(OS, *Expr.getSubExpr());
+}
 
 HCS08MCAsmInfo::HCS08MCAsmInfo(const Triple &TT,
                                  const MCTargetOptions &Options)

@@ -47,6 +47,8 @@ public:
         {"fixup_8", 0, 8, 0},
         {"fixup_16", 0, 16, 0},
         {"fixup_pcrel_8", 0, 8, 0},
+        {"fixup_hi8", 0, 8, 0},
+        {"fixup_lo8", 0, 8, 0},
     };
     static_assert(std::size(Infos) == HCS08::NumTargetFixupKinds,
                   "Not all fixup kinds added to Infos array");
@@ -109,6 +111,17 @@ void HCS08AsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     NumBytes = 1;
     break;
   }
+
+  case HCS08::fixup_hi8:
+    // High byte of a 16-bit value. Any value selects a valid byte.
+    Value = (Value >> 8) & 0xFF;
+    NumBytes = 1;
+    break;
+
+  case HCS08::fixup_lo8:
+    Value = Value & 0xFF;
+    NumBytes = 1;
+    break;
   }
 
   // Multi-byte fields are stored big endian, most significant byte first.

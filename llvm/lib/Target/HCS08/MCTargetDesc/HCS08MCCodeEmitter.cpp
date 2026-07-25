@@ -20,6 +20,7 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -110,8 +111,27 @@ unsigned HCS08MCCodeEmitter::getImm8OpValue(const MCInst &MI, unsigned Op,
     return MO.getImm() & 0xFF;
 
   assert(MO.isExpr() && "expected immediate or expression");
-  Fixups.push_back(MCFixup::create(getFixupOffset(MI, Op, 8), MO.getExpr(),
-                                   HCS08::fixup_8));
+
+  // A '#>expr' / '#<expr' byte selector arrives as an MCSpecifierExpr; the
+  // selected byte is encoded through a hi8/lo8 fixup on the inner expression.
+  const MCExpr *Expr = MO.getExpr();
+  HCS08::Fixups Kind = HCS08::fixup_8;
+  if (const auto *SE = dyn_cast<MCSpecifierExpr>(Expr)) {
+    switch (SE->getSpecifier()) {
+    case HCS08::S_HI8:
+      Kind = HCS08::fixup_hi8;
+      Expr = SE->getSubExpr();
+      break;
+    case HCS08::S_LO8:
+      Kind = HCS08::fixup_lo8;
+      Expr = SE->getSubExpr();
+      break;
+    default:
+      break;
+    }
+  }
+
+  Fixups.push_back(MCFixup::create(getFixupOffset(MI, Op, 8), Expr, Kind));
   return 0;
 }
 

@@ -14,12 +14,17 @@
 namespace llvm {
 
 class Triple;
+class MCSpecifierExpr;
+class raw_ostream;
 
 class HCS08MCAsmInfo : public MCAsmInfoELF {
   void anchor() override;
 
 public:
   explicit HCS08MCAsmInfo(const Triple &TT, const MCTargetOptions &Options);
+
+  void printSpecifierExpr(raw_ostream &OS,
+                          const MCSpecifierExpr &Expr) const override;
 };
 
 } // namespace llvm

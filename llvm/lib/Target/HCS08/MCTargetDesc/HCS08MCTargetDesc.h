@@ -39,6 +39,16 @@ MCAsmBackend *createHCS08MCAsmBackend(const Target &T,
 std::unique_ptr<MCObjectTargetWriter>
 createHCS08ELFObjectWriter(uint8_t OSABI);
 
+namespace HCS08 {
+// Relocation specifiers carried by an MCSpecifierExpr for the byte-select
+// immediate modifiers '#>expr' (high byte) and '#<expr' (low byte).
+enum Specifier : uint16_t {
+  S_None = 0,
+  S_HI8,
+  S_LO8,
+};
+} // namespace HCS08
+
 } // end namespace llvm
 
 // Defines symbolic names for HCS08 registers.

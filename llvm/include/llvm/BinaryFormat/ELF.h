@@ -1032,6 +1032,12 @@ enum : unsigned {
   EF_MSP430_MACH_MSP430x54 = 54,
 };
 
+// ELF Relocation types for the HCS08 core (used by the MC9S08 MCU family),
+// which uses EM_68HC08.
+enum {
+#include "ELFRelocs/HCS08.def"
+};
+
 // ELF Relocation types for MSP430
 enum {
 #include "ELFRelocs/MSP430.def"

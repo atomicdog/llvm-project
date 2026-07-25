@@ -148,6 +148,13 @@ StringRef llvm::object::getELFRelocationTypeName(uint32_t Machine,
       break;
     }
     break;
+  case ELF::EM_68HC08:
+    switch (Type) {
+#include "llvm/BinaryFormat/ELFRelocs/HCS08.def"
+    default:
+      break;
+    }
+    break;
   case ELF::EM_MSP430:
     switch (Type) {
 #include "llvm/BinaryFormat/ELFRelocs/MSP430.def"

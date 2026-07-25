@@ -1,0 +1,22 @@
+#ifndef ELF_RELOC
+#error "ELF_RELOC must be defined"
+#endif
+
+// There is no published psABI for the HC08/HCS08 family, so this is an
+// LLVM-defined relocation set covering the fixups the HCS08 addressing modes
+// can actually produce. All multi-byte values are stored big endian.
+
+ELF_RELOC(R_HCS08_NONE,               0)
+// 8-bit absolute. Direct-page (DIR) addresses and 8-bit immediates.
+ELF_RELOC(R_HCS08_8,                  1)
+// 16-bit absolute, big endian. Extended (EXT) addresses and the 16-bit
+// displacements of the IX2 and 9E-prefixed SP2 addressing modes.
+ELF_RELOC(R_HCS08_16,                 2)
+// 8-bit signed PC-relative branch displacement, relative to the address of the
+// instruction following the branch. Used by every Bcc, BRA, BSR, and by the
+// branch operand of BRSET/BRCLR/CBEQ/DBNZ.
+ELF_RELOC(R_HCS08_PCREL_8,            3)
+// High and low byte of a 16-bit symbol value, for materializing an address a
+// byte at a time through the 8-bit accumulator.
+ELF_RELOC(R_HCS08_HI8,                4)
+ELF_RELOC(R_HCS08_LO8,                5)

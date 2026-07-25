@@ -1376,6 +1376,25 @@ TEST(TripleTest, ParsedIDs) {
   EXPECT_EQ(Triple::UnknownOS, T.getOS());
   EXPECT_EQ(Triple::UnknownEnvironment, T.getEnvironment());
 
+  T = Triple("hcs08");
+  EXPECT_EQ(Triple::hcs08, T.getArch());
+  EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
+  EXPECT_EQ(Triple::UnknownOS, T.getOS());
+  EXPECT_EQ(Triple::UnknownEnvironment, T.getEnvironment());
+
+  // The core is also recognized by the MC9S08 MCU family name and the bare
+  // "s08" core name.
+  T = Triple("mc9s08");
+  EXPECT_EQ(Triple::hcs08, T.getArch());
+
+  T = Triple("s08");
+  EXPECT_EQ(Triple::hcs08, T.getArch());
+
+  T = Triple("hcs08-unknown-unknown");
+  EXPECT_EQ(Triple::hcs08, T.getArch());
+  EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
+  EXPECT_EQ(Triple::UnknownOS, T.getOS());
+
   T = Triple("xtensa-unknown-unknown");
   EXPECT_EQ(Triple::xtensa, T.getArch());
   EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
@@ -2043,6 +2062,14 @@ TEST(TripleTest, BitWidthChecks) {
   EXPECT_FALSE(T.isArch32Bit());
   EXPECT_FALSE(T.isArch64Bit());
   EXPECT_EQ(T.getArchPointerBitWidth(), 16U);
+
+  T.setArch(Triple::hcs08);
+  EXPECT_TRUE(T.isArch16Bit());
+  EXPECT_FALSE(T.isArch32Bit());
+  EXPECT_FALSE(T.isArch64Bit());
+  EXPECT_EQ(T.getArchPointerBitWidth(), 16U);
+  // The HCS08 stores 16-bit values most significant byte first.
+  EXPECT_FALSE(T.isLittleEndian());
 
   T.setArch(Triple::ppc);
   EXPECT_FALSE(T.isArch16Bit());

@@ -155,6 +155,28 @@ static uint64_t resolveMips64(uint64_t Type, uint64_t Offset, uint64_t S,
   }
 }
 
+static bool supportsHCS08(uint64_t Type) {
+  switch (Type) {
+  case ELF::R_HCS08_8:
+  case ELF::R_HCS08_16:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static uint64_t resolveHCS08(uint64_t Type, uint64_t Offset, uint64_t S,
+                              uint64_t /*LocData*/, int64_t Addend) {
+  switch (Type) {
+  case ELF::R_HCS08_8:
+    return (S + Addend) & 0xFF;
+  case ELF::R_HCS08_16:
+    return (S + Addend) & 0xFFFF;
+  default:
+    llvm_unreachable("Invalid relocation type");
+  }
+}
+
 static bool supportsMSP430(uint64_t Type) {
   switch (Type) {
   case ELF::R_MSP430_32:
@@ -870,6 +892,8 @@ getRelocationResolver(const ObjectFile &Obj) {
     case Triple::mipsel:
     case Triple::mips:
       return {supportsMips32, resolveMips32};
+    case Triple::hcs08:
+      return {supportsHCS08, resolveHCS08};
     case Triple::msp430:
       return {supportsMSP430, resolveMSP430};
     case Triple::sparc:

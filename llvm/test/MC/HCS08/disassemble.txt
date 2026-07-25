@@ -1,0 +1,53 @@
+# RUN: llvm-mc -triple=hcs08 -disassemble %s | FileCheck %s
+
+# An opcode byte determines the instruction length on its own, so the four
+# fixed-length decoder tables are unambiguous and can be tried shortest first.
+
+# One byte.
+# CHECK: nop
+0x9d
+# CHECK: mul
+0x42
+# CHECK: lda ,x
+0xf6
+# CHECK: rts
+0x81
+
+# Two bytes.
+# CHECK: lda #$42
+0xa6 0x42
+# CHECK: lda $10
+0xb6 0x10
+# CHECK: bset 3,$10
+0x16 0x10
+
+# Two bytes, page 2.
+# CHECK: ldhx ,x
+0x9e 0xae
+
+# Three bytes.
+# CHECK: lda $1234
+0xc6 0x12 0x34
+# CHECK: lda $1234,x
+0xd6 0x12 0x34
+# CHECK: mov #$aa,$20
+0x6e 0xaa 0x20
+
+# Three bytes, page 2.
+# CHECK: lda $05,sp
+0x9e 0xe6 0x05
+# CHECK: neg $04,sp
+0x9e 0x60 0x04
+
+# Four bytes, page 2.
+# CHECK: lda $0123,sp
+0x9e 0xd6 0x01 0x23
+# CHECK: ldhx $1234,x
+0x9e 0xbe 0x12 0x34
+
+# Branch displacements are decoded back into absolute targets. Each of these
+# starts at the offset shown and is relative to its own end.
+# CHECK: bra $0023
+0x20 0xfe
+# CHECK: brset 2,$10,$0025
+0x04 0x10 0xfd

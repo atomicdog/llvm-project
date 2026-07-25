@@ -65,11 +65,67 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
   }
 }
 
+// Store a 16-bit value through a pointer, a byte at a time.
+//
+// sthx has no indexed form, and in any case the value and the pointer both
+// want H:X. Park the value in a frame slot, then carry its two bytes through A
+// - big-endian, so the high half goes to the lower address. Expanding before
+// register allocation means the allocator only ever needs H:X for one of the
+// two values at a time.
+//
+// pshh/pshx would park the value in fewer bytes and without a frame slot, but
+// it is not safe here: the pointer has to be brought into H:X between the
+// pushes and the pulls, and if the allocator satisfies that with a reload, the
+// reload's n,sp displacement is measured against an SP the pushes have moved.
+// Frame offsets are only valid while SP holds still.
+static MachineBasicBlock *emitStore16Indexed(MachineInstr &MI,
+                                             MachineBasicBlock *MBB) {
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  int FI = FuncInfo->getWord16TempFI();
+  if (FI == -1) {
+    FI = MF.getFrameInfo().CreateSpillStackObject(2, Align(1));
+    FuncInfo->setWord16TempFI(FI);
+  }
+
+  Register Base = MI.getOperand(1).getReg();
+  int64_t Disp = MI.getOperand(2).getImm();
+  BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
+      .add(MI.getOperand(0)) // the value; dead after this, freeing H:X
+      .addFrameIndex(FI)
+      .addImm(0);
+
+  for (unsigned Byte = 0; Byte != 2; ++Byte) {
+    Register Tmp = MRI.createVirtualRegister(&HCS08::GR8RegClass);
+    BuildMI(*MBB, MI, DL, TII.get(HCS08::LDAsp), Tmp)
+        .addFrameIndex(FI)
+        .addImm(Byte);
+    // The pointer stays live until the last byte is written. Displacement zero
+    // has a one-byte form of its own.
+    int64_t At = Disp + Byte;
+    auto Store = BuildMI(*MBB, MI, DL,
+                         TII.get(At == 0 ? HCS08::STAix : HCS08::STAix1))
+                     .addReg(Tmp, RegState::Kill)
+                     .addReg(Base, getKillRegState(Byte == 1));
+    if (At != 0)
+      Store.addImm(At);
+  }
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {
   unsigned SpOpc;
   switch (MI.getOpcode()) {
+  case HCS08::STHXix:
+    return emitStore16Indexed(MI, MBB);
   case HCS08::ADD8rr: SpOpc = HCS08::ADD8sp; break;
   case HCS08::SUB8rr: SpOpc = HCS08::SUB8sp; break;
   case HCS08::AND8rr: SpOpc = HCS08::AND8sp; break;

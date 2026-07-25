@@ -27,12 +27,19 @@ class HCS08MachineFunctionInfo : public MachineFunctionInfo {
   /// expansion would eat the 255-byte frame a byte at a time.
   int ALUTempFI = -1;
 
+  /// Frame index of the two bytes the 16-bit indexed store parks its value in,
+  /// or -1 if unused. Shared across the function for the same reason.
+  int Word16TempFI = -1;
+
 public:
   HCS08MachineFunctionInfo() = default;
   HCS08MachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI) {}
 
   int getALUTempFI() const { return ALUTempFI; }
   void setALUTempFI(int FI) { ALUTempFI = FI; }
+
+  int getWord16TempFI() const { return Word16TempFI; }
+  void setWord16TempFI(int FI) { Word16TempFI = FI; }
 
   MachineFunctionInfo *
   clone(BumpPtrAllocator &Allocator, MachineFunction &DestMF,

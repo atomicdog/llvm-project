@@ -51,9 +51,13 @@ class HCS08MCCodeEmitter : public MCCodeEmitter {
                            SmallVectorImpl<MCFixup> &Fixups,
                            const MCSubtargetInfo &STI) const;
 
-  unsigned getSPMemOpValue(const MCInst &MI, unsigned Op,
+  unsigned getMemDispOpValue(const MCInst &MI, unsigned Op,
                            SmallVectorImpl<MCFixup> &Fixups,
                            const MCSubtargetInfo &STI) const;
+
+  unsigned getMemDisp16OpValue(const MCInst &MI, unsigned Op,
+                               SmallVectorImpl<MCFixup> &Fixups,
+                               const MCSubtargetInfo &STI) const;
 
   unsigned getPCRel8OpValue(const MCInst &MI, unsigned Op,
                             SmallVectorImpl<MCFixup> &Fixups,
@@ -139,17 +143,27 @@ unsigned HCS08MCCodeEmitter::getImm8OpValue(const MCInst &MI, unsigned Op,
   return 0;
 }
 
-/// Encode an n,sp operand. The operand pair is (base, displacement); the base
-/// is SP, which the addressing mode implies, so only the displacement is
-/// encoded. Frame offsets are always resolved to constants by the time they
-/// get here.
+/// Encode an n,sp or n,x operand. The operand pair is (base, displacement);
+/// the base is the register the addressing mode implies, so only the
+/// displacement is encoded. Frame offsets are always resolved to constants by
+/// the time they get here.
 unsigned
-HCS08MCCodeEmitter::getSPMemOpValue(const MCInst &MI, unsigned Op,
+HCS08MCCodeEmitter::getMemDispOpValue(const MCInst &MI, unsigned Op,
                                      SmallVectorImpl<MCFixup> &Fixups,
                                      const MCSubtargetInfo &STI) const {
   const MCOperand &MO = MI.getOperand(Op + 1);
-  assert(MO.isImm() && "expected a resolved stack displacement");
+  assert(MO.isImm() && "expected a resolved displacement");
   return MO.getImm() & 0xFF;
+}
+
+/// Encode the 16-bit displacement of an nn,x operand.
+unsigned
+HCS08MCCodeEmitter::getMemDisp16OpValue(const MCInst &MI, unsigned Op,
+                                         SmallVectorImpl<MCFixup> &Fixups,
+                                         const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(Op + 1);
+  assert(MO.isImm() && "expected a resolved displacement");
+  return MO.getImm() & 0xFFFF;
 }
 
 unsigned

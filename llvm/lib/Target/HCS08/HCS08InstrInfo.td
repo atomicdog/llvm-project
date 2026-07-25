@@ -126,12 +126,36 @@ def brtarget4 : BranchTarget<"decodeBranchTarget4">;
 def spmem : Operand<i16> {
   let MIOperandInfo = (ops GR16, imm8);
   let PrintMethod = "printSPMem";
-  let EncoderMethod = "getSPMemOpValue";
+  let EncoderMethod = "getMemDispOpValue";
 }
 
-// A frame-index address, optionally offset by a constant, matched into an
-// spmem operand pair.
+// The n,x addressing modes, likewise: H:X as the base plus a displacement,
+// one byte wide or two. The base really is a register here, so unlike spmem it
+// survives register allocation as one.
+def ixmem : Operand<i16> {
+  let MIOperandInfo = (ops GR16, imm8);
+  let PrintMethod = "printIXMem";
+  let EncoderMethod = "getMemDispOpValue";
+}
+
+def ixmem16 : Operand<i16> {
+  let MIOperandInfo = (ops GR16, imm16);
+  let PrintMethod = "printIXMem16";
+  let EncoderMethod = "getMemDisp16OpValue";
+}
+
+// The address shapes, kept disjoint so that exactly one matches: a frame
+// object (n,sp), or a pointer with a byte displacement (n,x), a wider one
+// (nn,x), or none (,x). A global goes through HCS08Wrapper and the extended
+// forms instead, which reach it without tying up H:X.
+//
+// ixaddr stops one short of the byte range: a 16-bit access at displacement N
+// also writes N+1, and keeping that in range everywhere is worth more than the
+// one byte the ix2 form costs at displacement 255.
 def stackaddr : ComplexPattern<i16, 2, "SelectStackAddr", [], []>;
+def ixaddr : ComplexPattern<i16, 2, "SelectIndexedAddr", [], [], 10>;
+def ixaddr16 : ComplexPattern<i16, 2, "SelectIndexedAddr16", [], [], 5>;
+def ixbase : ComplexPattern<i16, 1, "SelectIndexedBase", [], []>;
 
 //===----------------------------------------------------------------------===//
 // Load / store / arithmetic: the regular 8-addressing-mode matrix.
@@ -454,6 +478,54 @@ let isCodeGenOnly = 1 in {
 // A bare global address (e.g. taking its value into H:X).
 def : Pat<(i16 (HCS08Wrapper tglobaladdr:$addr)), (LDHXi tglobaladdr:$addr)>;
 
+//===----------------------------------------------------------------------===//
+// Indexed load/store: dereferencing a pointer held in H:X.
+//
+// H:X is the only index register, so it holds the pointer and, for a 16-bit
+// load, receives the result as well - which is fine, since the pointer is dead
+// by then. A 16-bit *store* has no indexed form on this machine (sthx is
+// direct/extended/stack only), so it goes through STHXix below.
+//
+// Displacements beyond a byte would need the ix2 forms; the address is
+// materialized with aix instead for now.
+//===----------------------------------------------------------------------===//
+
+let isCodeGenOnly = 1, hasSideEffects = 0 in {
+  let mayLoad = 1 in {
+    def LDAix : F8<0xF6, AddrModeIx, (outs GR8:$dst), (ins GR16:$base),
+                   "lda\t,x", [(set GR8:$dst, (load ixbase:$base))]>;
+    def LDAix1 : F16<0xE6, AddrModeIx1, (outs GR8:$dst), (ins ixmem:$b0),
+                     "lda\t$b0", [(set GR8:$dst, (load ixaddr:$b0))]>;
+    def LDAix2 : F24<0xD6, AddrModeIx2, (outs GR8:$dst), (ins ixmem16:$w0),
+                     "lda\t$w0", [(set GR8:$dst, (load ixaddr16:$w0))]>;
+    def LDHXix : F16P<0xAE, AddrModeIx, (outs GR16:$dst), (ins GR16:$base),
+                      "ldhx\t,x", [(set GR16:$dst, (load ixbase:$base))]>;
+    def LDHXix1 : F24P<0xCE, AddrModeIx1, (outs GR16:$dst), (ins ixmem:$b0),
+                       "ldhx\t$b0", [(set GR16:$dst, (load ixaddr:$b0))]>;
+    def LDHXix2 : F32P<0xBE, AddrModeIx2, (outs GR16:$dst), (ins ixmem16:$w0),
+                       "ldhx\t$w0", [(set GR16:$dst, (load ixaddr16:$w0))]>;
+  }
+  let mayStore = 1 in {
+    def STAix : F8<0xF7, AddrModeIx, (outs), (ins GR8:$src, GR16:$base),
+                   "sta\t,x", [(store GR8:$src, ixbase:$base)]>;
+    def STAix1 : F16<0xE7, AddrModeIx1, (outs), (ins GR8:$src, ixmem:$b0),
+                     "sta\t$b0", [(store GR8:$src, ixaddr:$b0)]>;
+    def STAix2 : F24<0xD7, AddrModeIx2, (outs), (ins GR8:$src, ixmem16:$w0),
+                     "sta\t$w0", [(store GR8:$src, ixaddr16:$w0)]>;
+
+    // A 16-bit store through a pointer, byte by byte. Both the value and the
+    // pointer want H:X, so the value is parked in a frame slot and its two
+    // bytes are carried through A; see EmitInstrWithCustomInserter. The
+    // displacement is a byte, which is why ixaddr stops at 254.
+    let isPseudo = 1, usesCustomInserter = 1, Defs = [CCR] in
+    def STHXix : HCS08Inst<0, AddrModeNone, (outs), (ins GR16:$src, ixmem:$b0),
+                           "", [(store GR16:$src, ixaddr:$b0)]>;
+  }
+}
+
+// A 16-bit store through a bare pointer is the same thing at displacement 0.
+def : Pat<(store GR16:$src, ixbase:$base), (STHXix GR16:$src, GR16:$base, 0)>;
+
 // 16-bit add of a signed-byte constant to H:X (pointer arithmetic): aix #n.
 // AIX does not affect the condition codes. sub-by-constant is canonicalized to
 // add of the negated constant, so it maps here too. General i16 + i16 is not
@@ -479,21 +551,35 @@ def : Pat<(add GR16:$src, i16SExt8:$c), (AIXi GR16:$src, (LO8xform $c))>;
 // memory (extended) operand, and set the condition codes.
 //===----------------------------------------------------------------------===//
 
-multiclass ALU8<bits<8> immop, bits<8> extop, bits<8> spop, string m,
-                SDNode op> {
+// Parameterized on the opcode column, like the MC-layer multiclasses above:
+// the addressing mode is the high nibble, so every form falls out of it.
+multiclass ALU8<bits<4> col, string m, SDNode op> {
   let Constraints = "$src = $dst", isCodeGenOnly = 1, hasSideEffects = 0,
       Defs = [CCR] in {
-    def i : F16<immop, AddrModeImm, (outs GR8:$dst), (ins GR8:$src, imm8:$b0),
-                m # "\t#$b0", [(set GR8:$dst, (op GR8:$src, imm:$b0))]>;
-    def ext : F24<extop, AddrModeExt, (outs GR8:$dst),
+    def i : F16<{0b1010, col}, AddrModeImm, (outs GR8:$dst),
+                (ins GR8:$src, imm8:$b0), m # "\t#$b0",
+                [(set GR8:$dst, (op GR8:$src, imm:$b0))]>;
+    def ext : F24<{0b1100, col}, AddrModeExt, (outs GR8:$dst),
                   (ins GR8:$src, imm16:$w0), m # "\t$w0",
                   [(set GR8:$dst,
                         (op GR8:$src,
                             (load (HCS08Wrapper tglobaladdr:$w0))))]>;
+    // Indexed forms: the second operand is read through a pointer in H:X.
+    let mayLoad = 1 in {
+      def ix2 : F24<{0b1101, col}, AddrModeIx2, (outs GR8:$dst),
+                    (ins GR8:$src, ixmem16:$w0), m # "\t$w0",
+                    [(set GR8:$dst, (op GR8:$src, (load ixaddr16:$w0)))]>;
+      def ix1 : F16<{0b1110, col}, AddrModeIx1, (outs GR8:$dst),
+                    (ins GR8:$src, ixmem:$b0), m # "\t$b0",
+                    [(set GR8:$dst, (op GR8:$src, (load ixaddr:$b0)))]>;
+      def ix : F8<{0b1111, col}, AddrModeIx, (outs GR8:$dst),
+                  (ins GR8:$src, GR16:$base), m # "\t,x",
+                  [(set GR8:$dst, (op GR8:$src, (load ixbase:$base)))]>;
+    }
     // Stack-relative form: the second operand comes from a frame object,
     // which covers incoming stack arguments and allocas directly.
     let mayLoad = 1 in
-    def sp : F24P<spop, AddrModeSp1, (outs GR8:$dst),
+    def sp : F24P<{0b1110, col}, AddrModeSp1, (outs GR8:$dst),
                   (ins GR8:$src, spmem:$b0), m # "\t$b0",
                   [(set GR8:$dst, (op GR8:$src, (load stackaddr:$b0)))]>;
     // Reg-reg fallback, for a second operand that is genuinely in a register
@@ -508,11 +594,11 @@ multiclass ALU8<bits<8> immop, bits<8> extop, bits<8> spop, string m,
   }
 }
 
-defm ADD8 : ALU8<0xAB, 0xCB, 0xEB, "add", add>;
-defm SUB8 : ALU8<0xA0, 0xC0, 0xE0, "sub", sub>;
-defm AND8 : ALU8<0xA4, 0xC4, 0xE4, "and", and>;
-defm ORA8 : ALU8<0xAA, 0xCA, 0xEA, "ora", or>;
-defm EOR8 : ALU8<0xA8, 0xC8, 0xE8, "eor", xor>;
+defm ADD8 : ALU8<0xB, "add", add>;
+defm SUB8 : ALU8<0x0, "sub", sub>;
+defm AND8 : ALU8<0x4, "and", and>;
+defm ORA8 : ALU8<0xA, "ora", or>;
+defm EOR8 : ALU8<0x8, "eor", xor>;
 
 // Negate the accumulator.
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],

@@ -38,6 +38,9 @@ private:
   void Select(SDNode *N) override;
 
   bool SelectStackAddr(SDValue Addr, SDValue &Base, SDValue &Disp);
+  bool SelectIndexedAddr(SDValue Addr, SDValue &Base, SDValue &Disp);
+  bool SelectIndexedAddr16(SDValue Addr, SDValue &Base, SDValue &Disp);
+  bool SelectIndexedBase(SDValue Addr, SDValue &Base);
 };
 
 class HCS08DAGToDAGISelLegacy : public SelectionDAGISelLegacy {
@@ -83,6 +86,73 @@ bool HCS08DAGToDAGISel::SelectStackAddr(SDValue Addr, SDValue &Base,
 
   Base = CurDAG->getTargetFrameIndex(FIN->getIndex(), MVT::i16);
   Disp = CurDAG->getTargetConstant(Off, dl, MVT::i8);
+  return true;
+}
+
+// The indexed modes handle pointers that live in a register. Every address
+// another mode owns has to be turned away here, or it will be matched as a
+// pointer and the node that describes it will be left with nothing to select
+// it: a frame object and an outgoing argument slot belong to the SP-relative
+// forms, a global to the extended forms, and none of them need tie up H:X, the
+// only index register there is. Peel a constant displacement first, since that
+// is what a getelementptr looks like.
+static bool isIndexedAddr(SDValue Addr) {
+  if (Addr.getOpcode() == ISD::ADD && isa<ConstantSDNode>(Addr.getOperand(1)))
+    Addr = Addr.getOperand(0);
+  switch (Addr.getOpcode()) {
+  case ISD::FrameIndex:
+  case HCS08ISD::Wrapper:
+  case HCS08ISD::OutArgAddr:
+    return false;
+  default:
+    return true;
+  }
+}
+
+// Pull the constant displacement out of an indexable address, if it has one.
+static bool matchIndexedDisp(SDValue Addr, uint64_t &Off) {
+  if (Addr.getOpcode() != ISD::ADD || !isIndexedAddr(Addr))
+    return false;
+  auto *C = dyn_cast<ConstantSDNode>(Addr.getOperand(1));
+  if (!C)
+    return false;
+  Off = C->getZExtValue();
+  return true;
+}
+
+// Match a pointer plus a constant byte displacement as the (base, offset) pair
+// of the n,x addressing mode. 255 is excluded so that a 16-bit access, which
+// also touches the next byte up, always fits (see the ixaddr comment).
+bool HCS08DAGToDAGISel::SelectIndexedAddr(SDValue Addr, SDValue &Base,
+                                          SDValue &Disp) {
+  uint64_t Off;
+  if (!matchIndexedDisp(Addr, Off) || Off >= 0xFF)
+    return false;
+
+  Base = Addr.getOperand(0);
+  Disp = CurDAG->getTargetConstant(Off, SDLoc(Addr), MVT::i8);
+  return true;
+}
+
+// The same for a displacement that needs the wider nn,x form.
+bool HCS08DAGToDAGISel::SelectIndexedAddr16(SDValue Addr, SDValue &Base,
+                                            SDValue &Disp) {
+  uint64_t Off;
+  if (!matchIndexedDisp(Addr, Off) || !isUInt<16>(Off))
+    return false;
+
+  Base = Addr.getOperand(0);
+  Disp = CurDAG->getTargetConstant(Off, SDLoc(Addr), MVT::i16);
+  return true;
+}
+
+// Match a bare pointer as the base of the ,x addressing mode. An address with
+// a displacement too large to encode lands here too, and the addition is then
+// materialized separately with aix.
+bool HCS08DAGToDAGISel::SelectIndexedBase(SDValue Addr, SDValue &Base) {
+  if (!isIndexedAddr(Addr))
+    return false;
+  Base = Addr;
   return true;
 }
 

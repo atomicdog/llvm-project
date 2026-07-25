@@ -68,6 +68,21 @@ void HCS08InstPrinter::printSPMem(const MCInst *MI, unsigned OpNo,
   O << ",sp";
 }
 
+/// Print an n,x operand, the same way: the base is H:X, implicit in the
+/// syntax, so only the displacement is printed.
+void HCS08InstPrinter::printIXMem(const MCInst *MI, unsigned OpNo,
+                                   raw_ostream &O) {
+  printImm8(MI, OpNo + 1, O);
+  O << ",x";
+}
+
+/// Print an nn,x operand - the same, with a 16-bit displacement.
+void HCS08InstPrinter::printIXMem16(const MCInst *MI, unsigned OpNo,
+                                     raw_ostream &O) {
+  printImm16(MI, OpNo + 1, O);
+  O << ",x";
+}
+
 /// Print a branch destination. The disassembler has already turned the encoded
 /// displacement into an absolute address, so this is just a 16-bit value.
 void HCS08InstPrinter::printBranchTarget(const MCInst *MI, uint64_t Address,

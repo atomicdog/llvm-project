@@ -400,3 +400,29 @@ let isCodeGenOnly = 1 in {
 
 // A bare global address (e.g. taking its value into H:X).
 def : Pat<(i16 (HCS08Wrapper tglobaladdr:$addr)), (LDHXi tglobaladdr:$addr)>;
+
+//===----------------------------------------------------------------------===//
+// 8-bit accumulator ALU (code generation).
+//
+// These operate in place on A ($src tied to $dst) with an immediate or a
+// memory (extended) operand, and set the condition codes.
+//===----------------------------------------------------------------------===//
+
+multiclass ALU8<bits<8> immop, bits<8> extop, string m, SDNode op> {
+  let Constraints = "$src = $dst", isCodeGenOnly = 1, hasSideEffects = 0,
+      Defs = [CCR] in {
+    def i : F16<immop, AddrModeImm, (outs GR8:$dst), (ins GR8:$src, imm8:$b0),
+                m # "\t#$b0", [(set GR8:$dst, (op GR8:$src, imm:$b0))]>;
+    def ext : F24<extop, AddrModeExt, (outs GR8:$dst),
+                  (ins GR8:$src, imm16:$w0), m # "\t$w0",
+                  [(set GR8:$dst,
+                        (op GR8:$src,
+                            (load (HCS08Wrapper tglobaladdr:$w0))))]>;
+  }
+}
+
+defm ADD8 : ALU8<0xAB, 0xCB, "add", add>;
+defm SUB8 : ALU8<0xA0, 0xC0, "sub", sub>;
+defm AND8 : ALU8<0xA4, 0xC4, "and", and>;
+defm ORA8 : ALU8<0xAA, 0xCA, "ora", or>;
+defm EOR8 : ALU8<0xA8, 0xC8, "eor", xor>;

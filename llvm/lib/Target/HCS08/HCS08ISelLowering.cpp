@@ -61,10 +61,40 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
   }
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
+  setTargetDAGCombine(ISD::ADD);
+
   // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
   setOperationAction(ISD::SHL, MVT::i8, Custom);
   setOperationAction(ISD::SRL, MVT::i8, Custom);
   setOperationAction(ISD::SRA, MVT::i8, Custom);
+}
+
+// Fold a constant displacement into the global address it is added to.
+//
+// The extended forms address a global through one relocatable operand, which
+// can carry an addend, so an access partway into a global should not need any
+// arithmetic. It arrives as an addition all the same, because the global is
+// wrapped before legalization splits a wide value into halves and asks for the
+// second one at +2 - and generic combining cannot see a global through the
+// wrapper.
+SDValue HCS08TargetLowering::PerformDAGCombine(SDNode *N,
+                                               DAGCombinerInfo &DCI) const {
+  if (N->getOpcode() != ISD::ADD)
+    return SDValue();
+
+  SDValue Wrapped = N->getOperand(0);
+  auto *Off = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!Off || Wrapped.getOpcode() != HCS08ISD::Wrapper)
+    return SDValue();
+
+  auto *GA = dyn_cast<GlobalAddressSDNode>(Wrapped.getOperand(0));
+  if (!GA)
+    return SDValue();
+
+  SDLoc dl(N);
+  SDValue Sum = DCI.DAG.getTargetGlobalAddress(
+      GA->getGlobal(), dl, MVT::i16, GA->getOffset() + Off->getSExtValue());
+  return DCI.DAG.getNode(HCS08ISD::Wrapper, dl, MVT::i16, Sum);
 }
 
 EVT HCS08TargetLowering::getSetCCResultType(const DataLayout &DL,

@@ -26,6 +26,8 @@ public:
 
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
 
+  SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
+
   /// A comparison result is a byte: it is produced by selecting between 1 and
   /// 0, and the accumulator is where that lands.
   EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,

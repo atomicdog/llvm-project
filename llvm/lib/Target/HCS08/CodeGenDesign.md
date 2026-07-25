@@ -1,9 +1,9 @@
 # HCS08 Code Generation — Design Plan
 
-Status: design/planning. The MC layer (assembler, disassembler, relocations,
-object emission) is complete and tested. This document plans the code
-generator (turning LLVM IR into HCS08 assembly). Nothing here is implemented
-yet.
+Status: Phases 0 and 1 are implemented; Phase 2 has not started. The MC layer
+(assembler, disassembler, relocations, object emission) is complete and
+tested. This document plans the code generator; §13 records where the result
+diverged from the plan.
 
 ## 1. The core problem
 
@@ -209,6 +209,47 @@ target.
   template for Phases 0-1.
 - **SDCC HC08** and the **CodeWarrior HC08 ABI** — real-world calling
   conventions and code-pattern references.
+
+## 13. What Phase 1 actually looks like
+
+Phase 1 is done: i8 and i16 load / store / add / sub / and / or / xor /
+compare / branch / select / call / ret, pointer dereference, i8 <-> i16
+conversion, allocas and stack arguments. i32 selects through the generic
+expansion. Not done: `mul`, variable shifts, and the runtime library.
+
+Where it diverged from the plan above:
+
+- **The ABI is register-based, not all-stack** (§4 "bring-up"). The first i8
+  goes in `A` and the first i16 in `H:X`; the rest go on the stack. The
+  register case was no harder and is what most calls hit.
+
+- **`n,sp` addresses SP+n, not SP+1+n** (§5). SP points one byte *below* the
+  last thing pushed, so the lowest byte of the frame is `1,sp` and `0,sp` is
+  the byte the next push takes. §5 got this wrong and so did the first
+  implementation; the frame was one byte low and the bottom slot was
+  overwritten by the next call's return address.
+
+- **Second operands live in memory, and getting them there is two problems,
+  not one.** There is no reg-reg anything: no ALU, no compare, no 16-bit
+  store through a pointer. Each is a pseudo whose operand is parked in a
+  frame slot by `EmitInstrWithCustomInserter`, before register allocation has
+  to hold two values of a one-register class. Where a carry has to survive
+  the sequence - the 16-bit add and sub - the chain itself is emitted in
+  `expandPostRAPseudo` instead, after everything that could insert an
+  instruction into the middle of it has run.
+
+- **Pseudos are the main structural tool**, more than §7 anticipated, and a
+  pseudo that survives to the AsmPrinter used to print as a blank line and
+  silently drop its operation. The printer now refuses them.
+
+- **CCR is modelled as one register** (§11.2), so an instruction either
+  clobbers all the flags or none. Loads and stores are declared not to touch
+  it, which is a lie about N/Z and the truth about C. Nothing exploits the
+  lie today: the compare and its branch come out of ISel adjacent, and
+  neither of them uses a virtual register, so there is no reason for the
+  allocator to insert anything between them. Splitting CCR into NZV and C, as
+  llvm-mos does, is the principled fix and would make the carry chains safe
+  by construction rather than by inspection.
 
 ## Bottom line
 

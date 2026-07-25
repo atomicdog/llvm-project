@@ -2581,6 +2581,18 @@ def AVRSystemLibrary
               avr_sin, avr_cos)>;
 
 //===----------------------------------------------------------------------===//
+// HCS08 Runtime Libcalls
+//===----------------------------------------------------------------------===//
+
+// The hardware multiply and divide are byte-wide and unsigned, and the
+// accumulator shifts one bit at a time, so everything wider is a call. The
+// names are the usual ones; the library itself is still to be written.
+def isHCS08 : RuntimeLibcallAvailability<"TT.getArch() == Triple::hcs08">;
+
+def HCS08SystemLibrary
+    : SystemRuntimeLibrary<isHCS08, (add DefaultRuntimeLibcallImpls)>;
+
+//===----------------------------------------------------------------------===//
 // DXIL Runtime Libcalls
 //===----------------------------------------------------------------------===//
 

@@ -33,6 +33,12 @@ public:
   EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,
                          EVT VT) const override;
 
+  /// A shift count is a byte: it is counted down in the accumulator's width,
+  /// not the pointer's, which is what it would default to.
+  MVT getScalarShiftAmountTy(const DataLayout &DL, EVT LHSTy) const override {
+    return MVT::i8;
+  }
+
   MachineBasicBlock *
   EmitInstrWithCustomInserter(MachineInstr &MI,
                               MachineBasicBlock *MBB) const override;

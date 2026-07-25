@@ -727,6 +727,81 @@ def : Pat<(i16 (zext GR8:$src)), (ZEXT8to16 GR8:$src)>;
 def : Pat<(i16 (anyext GR8:$src)), (ZEXT8to16 GR8:$src)>;
 def : Pat<(i16 (sext GR8:$src)), (SEXT8to16 GR8:$src)>;
 
+//===----------------------------------------------------------------------===//
+// Multiply and divide.
+//
+// Both are single instructions, but both work on X as well as A, so the second
+// operand has to reach X - which ldx can do straight from memory, and memory is
+// where the custom inserter parks it anyway.
+//
+//   mul  X:A <- A * X          low half in A, high half in X
+//   div  A <- H:A / X, H <- remainder
+//
+// A byte divide therefore needs H cleared first, and the remainder comes back
+// in H, which only the stack can reach.
+//===----------------------------------------------------------------------===//
+
+let isCodeGenOnly = 1, hasSideEffects = 0 in {
+  let mayLoad = 1, Defs = [X, NZV] in
+  def LDXsp : F24P<0xEE, AddrModeSp1, (outs), (ins spmem:$b0), "ldx\t$b0", []>;
+
+  let Defs = [H] in
+  def CLRHd : F8<0x8C, AddrModeInh, (outs), (ins), "clrh", []>;
+
+  let Constraints = "$src = $dst", Uses = [X] in {
+    // mul leaves the high half in X and clears the carry; it does not touch
+    // N, Z or V.
+    let Defs = [X, C] in
+    def MUL8 : F8<0x42, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "mul",
+                  []>;
+    let Defs = [H, NZV, C], Uses = [X, H] in
+    def DIV8 : F8<0x52, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "div",
+                  []>;
+  }
+
+  // The second operand is in a register, which neither instruction can use:
+  // parked by the custom inserter and loaded into X from there.
+  let isPseudo = 1, usesCustomInserter = 1, Defs = [X, H, NZV, C] in {
+    def MUL8rr : HCS08Inst<0, AddrModeNone, (outs GR8:$dst),
+                           (ins GR8:$src, GR8:$src2), "",
+                           [(set GR8:$dst, (mul GR8:$src, GR8:$src2))]>;
+    def UDIV8rr : HCS08Inst<0, AddrModeNone, (outs GR8:$dst),
+                            (ins GR8:$src, GR8:$src2), "",
+                            [(set GR8:$dst, (udiv GR8:$src, GR8:$src2))]>;
+    def UREM8rr : HCS08Inst<0, AddrModeNone, (outs GR8:$dst),
+                            (ins GR8:$src, GR8:$src2), "",
+                            [(set GR8:$dst, (urem GR8:$src, GR8:$src2))]>;
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// Shifting by a variable amount.
+//
+// The accumulator shifts one bit at a time, so a variable count is a loop.
+// The count is parked in a frame byte and counted down there, which keeps the
+// accumulator free to hold the value being shifted.
+//===----------------------------------------------------------------------===//
+
+let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1, Defs = [NZV] in {
+  def TSTsp : F24P<0x6D, AddrModeSp1, (outs), (ins spmem:$b0), "tst\t$b0", []>;
+  let mayStore = 1 in
+  def DECsp : F24P<0x6A, AddrModeSp1, (outs), (ins spmem:$b0), "dec\t$b0", []>;
+}
+
+class ShiftV<SDNode op>
+    : HCS08Inst<0, AddrModeNone, (outs GR8:$dst), (ins GR8:$src, GR8:$cnt), "",
+                [(set GR8:$dst, (op GR8:$src, GR8:$cnt))]> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+  let usesCustomInserter = 1;
+  let Defs = [NZV, C];
+  let hasSideEffects = 0;
+}
+
+def SHL8v : ShiftV<shl>;
+def SRL8v : ShiftV<srl>;
+def SRA8v : ShiftV<sra>;
+
 // Negate the accumulator.
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [NZV, C],
     hasSideEffects = 0 in

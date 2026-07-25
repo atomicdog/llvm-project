@@ -63,6 +63,21 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
 
   setTargetDAGCombine(ISD::ADD);
 
+  // The hardware multiply and divide are byte-wide and unsigned, so everything
+  // wider, and signed division, belongs to the runtime library - which does
+  // not exist yet, making these calls that fail to link rather than a compiler
+  // that crashes. A 16-bit variable shift wants the same treatment but cannot
+  // have it: LibCall is not an action legalization honours for a shift, so it
+  // stays unsupported until there is a library to call.
+  for (auto Op : {ISD::MUL, ISD::UDIV, ISD::SDIV, ISD::UREM, ISD::SREM})
+    setOperationAction(Op, MVT::i16, LibCall);
+  for (auto Op : {ISD::SDIV, ISD::SREM})
+    setOperationAction(Op, MVT::i8, LibCall);
+  setOperationAction(ISD::MULHU, MVT::i8, Expand);
+  setOperationAction(ISD::MULHS, MVT::i8, Expand);
+  setOperationAction(ISD::UMUL_LOHI, MVT::i8, Expand);
+  setOperationAction(ISD::SMUL_LOHI, MVT::i8, Expand);
+
   // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
   setOperationAction(ISD::SHL, MVT::i8, Custom);
   setOperationAction(ISD::SRL, MVT::i8, Custom);
@@ -309,6 +324,122 @@ static MachineBasicBlock *emitSelect(MachineInstr &MI,
   return SinkMBB;
 }
 
+/// Get (creating on first use) the function's one-byte scratch slot.
+static int getByteTemp(MachineFunction &MF) {
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  int FI = FuncInfo->getALUTempFI();
+  if (FI == -1) {
+    FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
+    FuncInfo->setALUTempFI(FI);
+  }
+  return FI;
+}
+
+// Multiply or divide by a value in a register. Both instructions want their
+// second operand in X, which ldx reaches from memory, so the operand is parked
+// exactly as the reg-reg ALU parks one.
+static MachineBasicBlock *emitMulDiv(MachineInstr &MI, MachineBasicBlock *MBB,
+                                     unsigned Opc, bool WantRemainder) {
+  MachineFunction &MF = *MBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+  int FI = getByteTemp(MF);
+  auto Def = RegState::Define | RegState::Implicit;
+
+  BuildMI(*MBB, MI, DL, TII.get(HCS08::STAsp))
+      .add(MI.getOperand(2))
+      .addFrameIndex(FI)
+      .addImm(0);
+  // div reads H:A, so the high half has to be zero for a byte divide. mul
+  // ignores H entirely, and clearing it there would be wasted.
+  if (Opc == HCS08::DIV8)
+    BuildMI(*MBB, MI, DL, TII.get(HCS08::CLRHd));
+  BuildMI(*MBB, MI, DL, TII.get(HCS08::LDXsp)).addFrameIndex(FI).addImm(0);
+
+  if (!WantRemainder) {
+    BuildMI(*MBB, MI, DL, TII.get(Opc))
+        .add(MI.getOperand(0))
+        .add(MI.getOperand(1));
+  } else {
+    // The remainder comes back in H, and the stack is the only way out of it.
+    Register Quot = MF.getRegInfo().createVirtualRegister(&HCS08::GR8RegClass);
+    BuildMI(*MBB, MI, DL, TII.get(Opc), Quot).add(MI.getOperand(1));
+    BuildMI(*MBB, MI, DL, TII.get(HCS08::PSHH))
+        .addReg(HCS08::H, RegState::Implicit);
+    BuildMI(*MBB, MI, DL, TII.get(HCS08::PULA))
+        .addReg(MI.getOperand(0).getReg(), Def);
+  }
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
+// Shift by a variable amount: a countdown loop over the single-bit shift.
+//
+//   entry: tst count; beq done          (a count of zero shifts nothing)
+//   loop:  lsla; dec count; bne loop
+//   done:
+//
+// The count lives in a frame byte rather than a register so that A stays free
+// for the value, which it has to hold across every iteration.
+static MachineBasicBlock *emitShiftLoop(MachineInstr &MI,
+                                        MachineBasicBlock *EntryMBB,
+                                        unsigned ShiftOpc) {
+  MachineFunction &MF = *EntryMBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  DebugLoc DL = MI.getDebugLoc();
+  const BasicBlock *BB = EntryMBB->getBasicBlock();
+  MachineFunction::iterator It = ++EntryMBB->getIterator();
+
+  MachineBasicBlock *LoopMBB = MF.CreateMachineBasicBlock(BB);
+  MachineBasicBlock *DoneMBB = MF.CreateMachineBasicBlock(BB);
+  MF.insert(It, LoopMBB);
+  MF.insert(It, DoneMBB);
+
+  DoneMBB->splice(DoneMBB->begin(), EntryMBB,
+                  std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
+  DoneMBB->transferSuccessorsAndUpdatePHIs(EntryMBB);
+
+  EntryMBB->addSuccessor(LoopMBB);
+  EntryMBB->addSuccessor(DoneMBB);
+  LoopMBB->addSuccessor(LoopMBB);
+  LoopMBB->addSuccessor(DoneMBB);
+
+  int FI = getByteTemp(MF);
+  Register Src = MI.getOperand(1).getReg();
+
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STAsp))
+      .add(MI.getOperand(2))
+      .addFrameIndex(FI)
+      .addImm(0);
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::TSTsp)).addFrameIndex(FI).addImm(0);
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::BEQcc)).addMBB(DoneMBB);
+
+  Register Cur = MRI.createVirtualRegister(&HCS08::GR8RegClass);
+  Register Next = MRI.createVirtualRegister(&HCS08::GR8RegClass);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::PHI), Cur)
+      .addReg(Src)
+      .addMBB(EntryMBB)
+      .addReg(Next)
+      .addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ShiftOpc), Next).addReg(Cur);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::DECsp))
+      .addFrameIndex(FI)
+      .addImm(0);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::BNEcc)).addMBB(LoopMBB);
+
+  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(HCS08::PHI),
+          MI.getOperand(0).getReg())
+      .addReg(Src)
+      .addMBB(EntryMBB)
+      .addReg(Next)
+      .addMBB(LoopMBB);
+
+  MI.eraseFromParent();
+  return DoneMBB;
+}
+
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {
@@ -321,6 +452,15 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   case HCS08::SELECT8:
   case HCS08::SELECT16:
     return emitSelect(MI, MBB);
+  case HCS08::MUL8rr:
+    return emitMulDiv(MI, MBB, HCS08::MUL8, /*WantRemainder=*/false);
+  case HCS08::UDIV8rr:
+    return emitMulDiv(MI, MBB, HCS08::DIV8, /*WantRemainder=*/false);
+  case HCS08::UREM8rr:
+    return emitMulDiv(MI, MBB, HCS08::DIV8, /*WantRemainder=*/true);
+  case HCS08::SHL8v: return emitShiftLoop(MI, MBB, HCS08::SHL8);
+  case HCS08::SRL8v: return emitShiftLoop(MI, MBB, HCS08::SRL8);
+  case HCS08::SRA8v: return emitShiftLoop(MI, MBB, HCS08::SRA8);
   case HCS08::ADD16rr: return emitALU16(MI, MBB, HCS08::ADD16m, false);
   case HCS08::SUB16rr: return emitALU16(MI, MBB, HCS08::SUB16m, false);
   case HCS08::AND16rr: return emitALU16(MI, MBB, HCS08::AND16m, false);
@@ -371,9 +511,13 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 }
 
 SDValue HCS08TargetLowering::LowerShift(SDValue Op, SelectionDAG &DAG) const {
+  // A variable count becomes a loop over the single-bit shift, which the
+  // pseudo builds, so hand the node back untouched. Returning a null SDValue
+  // here would not do that - legalization reads it as "no custom lowering
+  // after all" and falls through to the generic expansion.
   auto *C = dyn_cast<ConstantSDNode>(Op.getOperand(1));
   if (!C)
-    report_fatal_error("HCS08 variable shifts not yet implemented");
+    return Op;
 
   unsigned Cnt = C->getZExtValue() & 0x7; // in-range constant shift amount
   SDLoc dl(Op);

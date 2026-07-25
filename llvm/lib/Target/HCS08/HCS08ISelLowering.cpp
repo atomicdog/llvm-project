@@ -32,6 +32,28 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
 
   setStackPointerRegisterToSaveRestore(HCS08::SP);
   setBooleanContents(ZeroOrOneBooleanContent);
+
+  // A global address is materialized as a wrapped target address.
+  setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
+}
+
+SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  switch (Op.getOpcode()) {
+  case ISD::GlobalAddress:
+    return LowerGlobalAddress(Op, DAG);
+  default:
+    llvm_unreachable("unimplemented operation lowering");
+  }
+}
+
+SDValue HCS08TargetLowering::LowerGlobalAddress(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  auto *GA = cast<GlobalAddressSDNode>(Op);
+  SDLoc dl(Op);
+  SDValue Result = DAG.getTargetGlobalAddress(GA->getGlobal(), dl, MVT::i16,
+                                              GA->getOffset());
+  return DAG.getNode(HCS08ISD::Wrapper, dl, MVT::i16, Result);
 }
 
 SDValue HCS08TargetLowering::LowerFormalArguments(

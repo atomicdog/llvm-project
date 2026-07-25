@@ -24,7 +24,11 @@ public:
   explicit HCS08TargetLowering(const TargetMachine &TM,
                                const HCS08Subtarget &STI);
 
+  SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+
 private:
+  SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
+
   SDValue
   LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
                        const SmallVectorImpl<ISD::InputArg> &Ins,

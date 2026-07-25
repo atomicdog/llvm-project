@@ -26,6 +26,11 @@ include "HCS08InstrFormats.td"
 def HCS08retglue : SDNode<"HCS08ISD::RET_GLUE", SDTNone,
                           [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
+// Wraps a constant address (e.g. a global) so it can be selected into an
+// absolute-addressing operand.
+def SDT_HCS08Wrapper : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>, SDTCisPtrTy<0>]>;
+def HCS08Wrapper : SDNode<"HCS08ISD::Wrapper", SDT_HCS08Wrapper>;
+
 //===----------------------------------------------------------------------===//
 // Operands
 //===----------------------------------------------------------------------===//
@@ -372,3 +377,26 @@ let isCodeGenOnly = 1, hasSideEffects = 0 in {
   def LDHXi : F24<0x45, AddrModeImm, (outs GR16:$dst), (ins imm16:$w0),
                   "ldhx\t#$w0", [(set GR16:$dst, imm:$w0)]>;
 }
+
+// Extended (16-bit absolute) loads and stores, used for globals. The address
+// is a 16-bit operand; for a symbol it becomes an R_HCS08_16 relocation.
+let isCodeGenOnly = 1 in {
+  def LDAext : F24<0xC6, AddrModeExt, (outs GR8:$dst), (ins imm16:$w0),
+                   "lda\t$w0",
+                   [(set GR8:$dst, (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+  def LDHXext : F24<0x32, AddrModeExt, (outs GR16:$dst), (ins imm16:$w0),
+                    "ldhx\t$w0",
+                    [(set GR16:$dst, (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+
+  let mayStore = 1 in {
+    def STAext : F24<0xC7, AddrModeExt, (outs), (ins GR8:$src, imm16:$w0),
+                     "sta\t$w0",
+                     [(store GR8:$src, (HCS08Wrapper tglobaladdr:$w0))]>;
+    def STHXext : F24<0x35, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
+                      "sthx\t$w0",
+                      [(store GR16:$src, (HCS08Wrapper tglobaladdr:$w0))]>;
+  }
+}
+
+// A bare global address (e.g. taking its value into H:X).
+def : Pat<(i16 (HCS08Wrapper tglobaladdr:$addr)), (LDHXi tglobaladdr:$addr)>;

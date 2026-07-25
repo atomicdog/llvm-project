@@ -471,6 +471,12 @@ defm AND8 : ALU8<0xA4, 0xC4, 0xE4, "and", and>;
 defm ORA8 : ALU8<0xAA, 0xCA, 0xEA, "ora", or>;
 defm EOR8 : ALU8<0xA8, 0xC8, 0xE8, "eor", xor>;
 
+// Negate the accumulator.
+let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
+    hasSideEffects = 0 in
+def NEG8 : F8<0x40, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "nega",
+              [(set GR8:$dst, (sub 0, GR8:$src))]>;
+
 // Single-bit accumulator shifts (the row-4 read-modify-write forms).
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
     hasSideEffects = 0 in {

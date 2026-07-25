@@ -54,8 +54,14 @@
 ; CHECK: sta ,x                              ; encoding: [0xf7]
 ; CHECK: sta $88,sp                          ; encoding: [0x9e,0xe7,0x88]
 ; CHECK: sta $99aa,sp                        ; encoding: [0x9e,0xd7,0x99,0xaa]
+; stx is the other store; like sta it has every non-immediate mode.
 ; CHECK: stx $22                             ; encoding: [0xbf,0x22]
+; CHECK: stx $3344                           ; encoding: [0xcf,0x33,0x44]
+; CHECK: stx $5566,x                         ; encoding: [0xdf,0x55,0x66]
+; CHECK: stx $77,x                           ; encoding: [0xef,0x77]
 ; CHECK: stx ,x                              ; encoding: [0xff]
+; CHECK: stx $88,sp                          ; encoding: [0x9e,0xef,0x88]
+; CHECK: stx $99aa,sp                        ; encoding: [0x9e,0xdf,0x99,0xaa]
 	sta	$22
 	sta	$3344
 	sta	$5566,x
@@ -64,7 +70,12 @@
 	sta	$88,sp
 	sta	$99aa,sp
 	stx	$22
+	stx	$3344
+	stx	$5566,x
+	stx	$77,x
 	stx	,x
+	stx	$88,sp
+	stx	$99aa,sp
 
 ; CHECK: ais #$fc                            ; encoding: [0xa7,0xfc]
 ; CHECK: aix #$02                            ; encoding: [0xaf,0x02]
@@ -79,6 +90,8 @@
 ; CHECK: jmp ,x                              ; encoding: [0xfc]
 ; CHECK: jsr $22                             ; encoding: [0xbd,0x22]
 ; CHECK: jsr $3344                           ; encoding: [0xcd,0x33,0x44]
+; CHECK: jsr $5566,x                         ; encoding: [0xdd,0x55,0x66]
+; CHECK: jsr $77,x                           ; encoding: [0xed,0x77]
 ; CHECK: jsr ,x                              ; encoding: [0xfd]
 	jmp	$22
 	jmp	$3344
@@ -87,4 +100,6 @@
 	jmp	,x
 	jsr	$22
 	jsr	$3344
+	jsr	$5566,x
+	jsr	$77,x
 	jsr	,x

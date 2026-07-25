@@ -53,3 +53,59 @@
 ; CHECK: lsla                                ; encoding: [0x48]
 	asl	$10
 	asla
+
+; Every read-modify-write operation has an accumulator form (row 4) and an X
+; form (row 5); the low nibble is the same operation column as the direct form.
+; CHECK: nega                                ; encoding: [0x40]
+; CHECK: coma                                ; encoding: [0x43]
+; CHECK: lsra                                ; encoding: [0x44]
+; CHECK: rora                                ; encoding: [0x46]
+; CHECK: asra                                ; encoding: [0x47]
+; CHECK: lsla                                ; encoding: [0x48]
+; CHECK: rola                                ; encoding: [0x49]
+; CHECK: deca                                ; encoding: [0x4a]
+; CHECK: inca                                ; encoding: [0x4c]
+; CHECK: tsta                                ; encoding: [0x4d]
+; CHECK: clra                                ; encoding: [0x4f]
+	nega
+	coma
+	lsra
+	rora
+	asra
+	lsla
+	rola
+	deca
+	inca
+	tsta
+	clra
+; CHECK: negx                                ; encoding: [0x50]
+; CHECK: comx                                ; encoding: [0x53]
+; CHECK: lsrx                                ; encoding: [0x54]
+; CHECK: rorx                                ; encoding: [0x56]
+; CHECK: asrx                                ; encoding: [0x57]
+; CHECK: lslx                                ; encoding: [0x58]
+; CHECK: rolx                                ; encoding: [0x59]
+; CHECK: decx                                ; encoding: [0x5a]
+; CHECK: incx                                ; encoding: [0x5c]
+; CHECK: tstx                                ; encoding: [0x5d]
+; CHECK: clrx                                ; encoding: [0x5f]
+	negx
+	comx
+	lsrx
+	rorx
+	asrx
+	lslx
+	rolx
+	decx
+	incx
+	tstx
+	clrx
+
+; The indexed and stack-relative modes generalize beyond neg; check them on a
+; second operation column (clr).
+; CHECK: clr $10,x                           ; encoding: [0x6f,0x10]
+; CHECK: clr ,x                              ; encoding: [0x7f]
+; CHECK: clr $10,sp                          ; encoding: [0x9e,0x6f,0x10]
+	clr	$10,x
+	clr	,x
+	clr	$10,sp

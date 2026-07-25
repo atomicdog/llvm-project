@@ -39,6 +39,11 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
   // Conditional branches go through a compare that sets the condition codes.
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
+
+  // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
+  setOperationAction(ISD::SHL, MVT::i8, Custom);
+  setOperationAction(ISD::SRL, MVT::i8, Custom);
+  setOperationAction(ISD::SRA, MVT::i8, Custom);
 }
 
 SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
@@ -48,9 +53,36 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
     return LowerGlobalAddress(Op, DAG);
   case ISD::BR_CC:
     return LowerBR_CC(Op, DAG);
+  case ISD::SHL:
+  case ISD::SRL:
+  case ISD::SRA:
+    return LowerShift(Op, DAG);
   default:
     llvm_unreachable("unimplemented operation lowering");
   }
+}
+
+SDValue HCS08TargetLowering::LowerShift(SDValue Op, SelectionDAG &DAG) const {
+  auto *C = dyn_cast<ConstantSDNode>(Op.getOperand(1));
+  if (!C)
+    report_fatal_error("HCS08 variable shifts not yet implemented");
+
+  unsigned Cnt = C->getZExtValue() & 0x7; // in-range constant shift amount
+  SDLoc dl(Op);
+  SDValue Val = Op.getOperand(0);
+
+  unsigned NodeTy;
+  switch (Op.getOpcode()) {
+  case ISD::SHL: NodeTy = HCS08ISD::SHL1; break;
+  case ISD::SRL: NodeTy = HCS08ISD::SRL1; break;
+  case ISD::SRA: NodeTy = HCS08ISD::SRA1; break;
+  default:
+    llvm_unreachable("not a shift");
+  }
+
+  for (unsigned i = 0; i != Cnt; ++i)
+    Val = DAG.getNode(NodeTy, dl, MVT::i8, Val);
+  return Val;
 }
 
 // Translate an ISD condition code for an integer compare of A against an

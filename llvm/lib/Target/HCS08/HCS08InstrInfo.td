@@ -39,6 +39,12 @@ def HCS08cmp  : SDNode<"HCS08ISD::CMP", SDT_HCS08Cmp, [SDNPOutGlue]>;
 def HCS08brcc : SDNode<"HCS08ISD::BR_CC", SDT_HCS08BrCC,
                        [SDNPHasChain, SDNPInGlue]>;
 
+// Single-bit shifts of the accumulator. Multi-bit shifts by a constant are
+// lowered to a chain of these.
+def HCS08shl1 : SDNode<"HCS08ISD::SHL1", SDTIntUnaryOp>;
+def HCS08srl1 : SDNode<"HCS08ISD::SRL1", SDTIntUnaryOp>;
+def HCS08sra1 : SDNode<"HCS08ISD::SRA1", SDTIntUnaryOp>;
+
 // Direct call and the call-sequence markers.
 def SDT_HCS08Call : SDTypeProfile<0, -1, [SDTCisVT<0, iPTR>]>;
 def HCS08call : SDNode<"HCS08ISD::CALL", SDT_HCS08Call,
@@ -464,6 +470,17 @@ defm SUB8 : ALU8<0xA0, 0xC0, 0xE0, "sub", sub>;
 defm AND8 : ALU8<0xA4, 0xC4, 0xE4, "and", and>;
 defm ORA8 : ALU8<0xAA, 0xCA, 0xEA, "ora", or>;
 defm EOR8 : ALU8<0xA8, 0xC8, 0xE8, "eor", xor>;
+
+// Single-bit accumulator shifts (the row-4 read-modify-write forms).
+let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
+    hasSideEffects = 0 in {
+  def SHL8 : F8<0x48, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "lsla",
+                [(set GR8:$dst, (HCS08shl1 GR8:$src))]>;
+  def SRL8 : F8<0x44, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "lsra",
+                [(set GR8:$dst, (HCS08srl1 GR8:$src))]>;
+  def SRA8 : F8<0x47, AddrModeInh, (outs GR8:$dst), (ins GR8:$src), "asra",
+                [(set GR8:$dst, (HCS08sra1 GR8:$src))]>;
+}
 
 //===----------------------------------------------------------------------===//
 // Compares and conditional branches (code generation).

@@ -74,6 +74,57 @@ void HCS08InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   BuildMI(MBB, MI, DL, get(Opc), DestReg).addFrameIndex(FrameIndex).addImm(0);
 }
 
+bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
+  // The low byte's operation sets the carry and the high byte's consumes it.
+  unsigned LoOpc, HiOpc;
+  switch (MI.getOpcode()) {
+  case HCS08::ADD16m: LoOpc = HCS08::ADD8sp; HiOpc = HCS08::ADC8sp; break;
+  case HCS08::SUB16m: LoOpc = HCS08::SUB8sp; HiOpc = HCS08::SBC8sp; break;
+  // The logical operations have no carry to propagate; both halves are the
+  // same instruction.
+  case HCS08::AND16m: LoOpc = HiOpc = HCS08::AND8sp; break;
+  case HCS08::ORA16m: LoOpc = HiOpc = HCS08::ORA8sp; break;
+  case HCS08::EOR16m: LoOpc = HiOpc = HCS08::EOR8sp; break;
+  default:
+    return false;
+  }
+
+  // Both operands are frame slots that prologue/epilogue insertion has already
+  // resolved to SP-relative displacements. This runs after everything that
+  // could have inserted an instruction into the middle of the chain, which is
+  // the point: the carry has to survive from the low byte to the high one.
+  MachineBasicBlock &MBB = *MI.getParent();
+  DebugLoc DL = MI.getDebugLoc();
+  Register Dst = MI.getOperand(0).getReg();
+  Register BaseA = MI.getOperand(1).getReg();
+  int64_t DispA = MI.getOperand(2).getImm();
+  Register BaseB = MI.getOperand(3).getReg();
+  int64_t DispB = MI.getOperand(4).getImm();
+
+  assert(isUInt<8>(DispA + 1) && isUInt<8>(DispB + 1) &&
+         "HCS08 scratch word out of SP-relative range");
+
+  // The result is built in the first slot, low byte first, then loaded into
+  // H:X. Big-endian, so the low byte is the higher address.
+  for (int Byte = 1; Byte >= 0; --Byte) {
+    BuildMI(MBB, MI, DL, get(HCS08::LDAsp), HCS08::A)
+        .addReg(BaseA)
+        .addImm(DispA + Byte);
+    BuildMI(MBB, MI, DL, get(Byte == 1 ? LoOpc : HiOpc), HCS08::A)
+        .addReg(HCS08::A)
+        .addReg(BaseB)
+        .addImm(DispB + Byte);
+    BuildMI(MBB, MI, DL, get(HCS08::STAsp))
+        .addReg(HCS08::A)
+        .addReg(BaseA)
+        .addImm(DispA + Byte);
+  }
+  BuildMI(MBB, MI, DL, get(HCS08::LDHXsp), Dst).addReg(BaseA).addImm(DispA);
+
+  MI.eraseFromParent();
+  return true;
+}
+
 static bool isCondBranchOpc(unsigned Opc) {
   switch (Opc) {
   case HCS08::BEQcc:

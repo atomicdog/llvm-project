@@ -65,6 +65,20 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
   }
 }
 
+/// Get (creating on first use) one of the function's two scratch words.
+static int getWord16Temp(MachineFunction &MF, bool Second) {
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  int FI = Second ? FuncInfo->getWord16Temp2FI() : FuncInfo->getWord16TempFI();
+  if (FI == -1) {
+    FI = MF.getFrameInfo().CreateSpillStackObject(2, Align(1));
+    if (Second)
+      FuncInfo->setWord16Temp2FI(FI);
+    else
+      FuncInfo->setWord16TempFI(FI);
+  }
+  return FI;
+}
+
 // Store a 16-bit value through a pointer, a byte at a time.
 //
 // sthx has no indexed form, and in any case the value and the pointer both
@@ -85,12 +99,7 @@ static MachineBasicBlock *emitStore16Indexed(MachineInstr &MI,
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   DebugLoc DL = MI.getDebugLoc();
 
-  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
-  int FI = FuncInfo->getWord16TempFI();
-  if (FI == -1) {
-    FI = MF.getFrameInfo().CreateSpillStackObject(2, Align(1));
-    FuncInfo->setWord16TempFI(FI);
-  }
+  int FI = getWord16Temp(MF, /*Second=*/false);
 
   Register Base = MI.getOperand(1).getReg();
   int64_t Disp = MI.getOperand(2).getImm();
@@ -119,6 +128,50 @@ static MachineBasicBlock *emitStore16Indexed(MachineInstr &MI,
   return MBB;
 }
 
+// Get a 16-bit ALU operand into memory, which is where every form of the
+// operation has to read it from.
+//
+// This is the half of the problem that has to be solved before register
+// allocation: H:X is the only 16-bit register, so it cannot hold both
+// operands. The byte chain itself is left to expandPostRAPseudo, which is the
+// half that has to be solved after.
+static MachineBasicBlock *emitALU16(MachineInstr &MI, MachineBasicBlock *MBB,
+                                    unsigned MemOpc, bool SecondInMemory) {
+  MachineFunction &MF = *MBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+
+  // The result is built in the first operand's slot, so that one is always a
+  // scratch word of ours - the second may be any frame object, since the chain
+  // only reads it.
+  int FIa = getWord16Temp(MF, /*Second=*/false);
+  BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
+      .add(MI.getOperand(1))
+      .addFrameIndex(FIa)
+      .addImm(0);
+
+  int FIb = -1;
+  if (!SecondInMemory) {
+    FIb = getWord16Temp(MF, /*Second=*/true);
+    BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
+        .add(MI.getOperand(2))
+        .addFrameIndex(FIb)
+        .addImm(0);
+  }
+
+  auto Chain = BuildMI(*MBB, MI, DL, TII.get(MemOpc))
+                   .add(MI.getOperand(0)) // destination, H:X
+                   .addFrameIndex(FIa)
+                   .addImm(0);
+  if (SecondInMemory)
+    Chain.add(MI.getOperand(2)).add(MI.getOperand(3));
+  else
+    Chain.addFrameIndex(FIb).addImm(0);
+
+  MI.eraseFromParent();
+  return MBB;
+}
+
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {
@@ -126,6 +179,16 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   switch (MI.getOpcode()) {
   case HCS08::STHXix:
     return emitStore16Indexed(MI, MBB);
+  case HCS08::ADD16rr: return emitALU16(MI, MBB, HCS08::ADD16m, false);
+  case HCS08::SUB16rr: return emitALU16(MI, MBB, HCS08::SUB16m, false);
+  case HCS08::AND16rr: return emitALU16(MI, MBB, HCS08::AND16m, false);
+  case HCS08::ORA16rr: return emitALU16(MI, MBB, HCS08::ORA16m, false);
+  case HCS08::EOR16rr: return emitALU16(MI, MBB, HCS08::EOR16m, false);
+  case HCS08::ADD16rm: return emitALU16(MI, MBB, HCS08::ADD16m, true);
+  case HCS08::SUB16rm: return emitALU16(MI, MBB, HCS08::SUB16m, true);
+  case HCS08::AND16rm: return emitALU16(MI, MBB, HCS08::AND16m, true);
+  case HCS08::ORA16rm: return emitALU16(MI, MBB, HCS08::ORA16m, true);
+  case HCS08::EOR16rm: return emitALU16(MI, MBB, HCS08::EOR16m, true);
   case HCS08::ADD8rr: SpOpc = HCS08::ADD8sp; break;
   case HCS08::SUB8rr: SpOpc = HCS08::SUB8sp; break;
   case HCS08::AND8rr: SpOpc = HCS08::AND8sp; break;

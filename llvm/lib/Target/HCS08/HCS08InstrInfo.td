@@ -600,6 +600,93 @@ defm AND8 : ALU8<0x4, "and", and>;
 defm ORA8 : ALU8<0xA, "ora", or>;
 defm EOR8 : ALU8<0x8, "eor", xor>;
 
+// The carry-in halves of the 16-bit chains. Nothing selects these directly -
+// they are built by hand in expandPostRAPseudo - so they carry no pattern, but
+// they do read CCR, which is what keeps anything from being scheduled between
+// them and the add or sub that set the carry.
+let isCodeGenOnly = 1, Constraints = "$src = $dst", hasSideEffects = 0,
+    mayLoad = 1, Defs = [CCR], Uses = [CCR] in {
+  def ADC8sp : F24P<0xE9, AddrModeSp1, (outs GR8:$dst),
+                    (ins GR8:$src, spmem:$b0), "adc\t$b0", []>;
+  def SBC8sp : F24P<0xE2, AddrModeSp1, (outs GR8:$dst),
+                    (ins GR8:$src, spmem:$b0), "sbc\t$b0", []>;
+}
+
+//===----------------------------------------------------------------------===//
+// General 16-bit ALU.
+//
+// There is no 16-bit ALU here beyond aix, so these become byte chains through
+// A, low byte first so that add and sub can carry into the high byte. Two
+// problems have to be solved separately:
+//
+//  - H:X cannot hold two 16-bit values, so both operands must be in memory.
+//    EmitInstrWithCustomInserter parks them in frame slots before register
+//    allocation, which is where that has to happen.
+//
+//  - the carry must survive from the low byte's add to the high byte's adc.
+//    The chain is therefore emitted in expandPostRAPseudo, after everything
+//    that could insert an instruction into the middle of it has run. (lda and
+//    sta do not disturb the carry, but relying on which instructions land
+//    there would be relying on luck.)
+//===----------------------------------------------------------------------===//
+
+class ALU16rr<SDNode op>
+    : HCS08Inst<0, AddrModeNone, (outs GR16:$dst), (ins GR16:$src, GR16:$src2),
+                "", [(set GR16:$dst, (op GR16:$src, GR16:$src2))]> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+  let usesCustomInserter = 1;
+  let Defs = [A, CCR];
+  let hasSideEffects = 0;
+}
+
+def ADD16rr : ALU16rr<add>;
+def SUB16rr : ALU16rr<sub>;
+def AND16rr : ALU16rr<and>;
+def ORA16rr : ALU16rr<or>;
+def EOR16rr : ALU16rr<xor>;
+
+// The same where the second operand is already a frame object - an incoming
+// stack argument or an alloca - which is worth its own form: it is the common
+// shape for a two-argument function, and parking a value that is already in
+// memory costs a round trip through H:X that the allocator then has to spill
+// around.
+class ALU16rm<SDNode op>
+    : HCS08Inst<0, AddrModeNone, (outs GR16:$dst), (ins GR16:$src, spmem:$b),
+                "", [(set GR16:$dst, (op GR16:$src, (load stackaddr:$b)))]> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+  let usesCustomInserter = 1;
+  let Defs = [A, CCR];
+  let mayLoad = 1;
+  let hasSideEffects = 0;
+}
+
+def ADD16rm : ALU16rm<add>;
+def SUB16rm : ALU16rm<sub>;
+def AND16rm : ALU16rm<and>;
+def ORA16rm : ALU16rm<or>;
+def EOR16rm : ALU16rm<xor>;
+
+// The parked form: both operands are frame slots by now. The result is built
+// in the first of them and loaded into H:X. Seven three-byte instructions.
+class ALU16mem
+    : HCS08Inst<21, AddrModeNone, (outs GR16:$dst), (ins spmem:$a, spmem:$b),
+                "", []> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+  let Defs = [A, CCR];
+  let mayLoad = 1;
+  let mayStore = 1;
+  let hasSideEffects = 0;
+}
+
+def ADD16m : ALU16mem;
+def SUB16m : ALU16mem;
+def AND16m : ALU16mem;
+def ORA16m : ALU16mem;
+def EOR16m : ALU16mem;
+
 // Negate the accumulator.
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [CCR],
     hasSideEffects = 0 in

@@ -802,6 +802,37 @@ def SHL8v : ShiftV<shl>;
 def SRL8v : ShiftV<srl>;
 def SRA8v : ShiftV<sra>;
 
+// A 16-bit shift has no instruction at all, but it does not need the
+// accumulator either: the read-modify-write forms shift a byte in place, and a
+// rotate carries between the two halves. So the value stays in a frame word
+// and the loop touches no register.
+let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
+  let Defs = [NZV, C] in {
+    def LSLsp : F24P<0x68, AddrModeSp1, (outs), (ins spmem:$b0), "lsl\t$b0", []>;
+    def LSRsp : F24P<0x64, AddrModeSp1, (outs), (ins spmem:$b0), "lsr\t$b0", []>;
+    def ASRsp : F24P<0x67, AddrModeSp1, (outs), (ins spmem:$b0), "asr\t$b0", []>;
+  }
+  // The rotates are the half that carries, so they read C as well as write it.
+  let Defs = [NZV, C], Uses = [C] in {
+    def ROLsp : F24P<0x69, AddrModeSp1, (outs), (ins spmem:$b0), "rol\t$b0", []>;
+    def RORsp : F24P<0x66, AddrModeSp1, (outs), (ins spmem:$b0), "ror\t$b0", []>;
+  }
+}
+
+class ShiftV16<SDNode op>
+    : HCS08Inst<0, AddrModeNone, (outs GR16:$dst), (ins GR16:$src, GR8:$cnt),
+                "", [(set GR16:$dst, (op GR16:$src, GR8:$cnt))]> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+  let usesCustomInserter = 1;
+  let Defs = [NZV, C];
+  let hasSideEffects = 0;
+}
+
+def SHL16v : ShiftV16<shl>;
+def SRL16v : ShiftV16<srl>;
+def SRA16v : ShiftV16<sra>;
+
 // Negate the accumulator.
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [NZV, C],
     hasSideEffects = 0 in

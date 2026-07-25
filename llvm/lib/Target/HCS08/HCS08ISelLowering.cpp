@@ -440,6 +440,75 @@ static MachineBasicBlock *emitShiftLoop(MachineInstr &MI,
   return DoneMBB;
 }
 
+// A 16-bit shift by a variable amount. Same countdown loop as the byte case,
+// but the value never enters a register: the read-modify-write forms shift a
+// frame byte in place and a rotate carries between the two halves, so the loop
+// body is four memory operations and no allocation problem at all.
+//
+// C promotes both operands of a shift to int, so this is what an ordinary
+// "c << n" on two chars turns into - not a corner case.
+static MachineBasicBlock *emitShiftLoop16(MachineInstr &MI,
+                                          MachineBasicBlock *EntryMBB,
+                                          unsigned FirstOpc, unsigned ThenOpc,
+                                          bool LowByteFirst) {
+  MachineFunction &MF = *EntryMBB->getParent();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+  const BasicBlock *BB = EntryMBB->getBasicBlock();
+  MachineFunction::iterator It = ++EntryMBB->getIterator();
+
+  MachineBasicBlock *LoopMBB = MF.CreateMachineBasicBlock(BB);
+  MachineBasicBlock *DoneMBB = MF.CreateMachineBasicBlock(BB);
+  MF.insert(It, LoopMBB);
+  MF.insert(It, DoneMBB);
+
+  DoneMBB->splice(DoneMBB->begin(), EntryMBB,
+                  std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
+  DoneMBB->transferSuccessorsAndUpdatePHIs(EntryMBB);
+
+  EntryMBB->addSuccessor(LoopMBB);
+  EntryMBB->addSuccessor(DoneMBB);
+  LoopMBB->addSuccessor(LoopMBB);
+  LoopMBB->addSuccessor(DoneMBB);
+
+  int Val = getWord16Temp(MF, /*Second=*/false);
+  int Cnt = getByteTemp(MF);
+
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STHXsp))
+      .add(MI.getOperand(1))
+      .addFrameIndex(Val)
+      .addImm(0);
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STAsp))
+      .add(MI.getOperand(2))
+      .addFrameIndex(Cnt)
+      .addImm(0);
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::TSTsp)).addFrameIndex(Cnt).addImm(0);
+  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::BEQcc)).addMBB(DoneMBB);
+
+  // Big-endian, so the high half is at offset 0. A left shift starts at the
+  // low byte and carries upwards; a right shift starts at the high byte and
+  // carries down.
+  unsigned First = LowByteFirst ? 1 : 0, Then = LowByteFirst ? 0 : 1;
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(FirstOpc))
+      .addFrameIndex(Val)
+      .addImm(First);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ThenOpc))
+      .addFrameIndex(Val)
+      .addImm(Then);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::DECsp))
+      .addFrameIndex(Cnt)
+      .addImm(0);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::BNEcc)).addMBB(LoopMBB);
+
+  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(HCS08::LDHXsp),
+          MI.getOperand(0).getReg())
+      .addFrameIndex(Val)
+      .addImm(0);
+
+  MI.eraseFromParent();
+  return DoneMBB;
+}
+
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {
@@ -461,6 +530,12 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   case HCS08::SHL8v: return emitShiftLoop(MI, MBB, HCS08::SHL8);
   case HCS08::SRL8v: return emitShiftLoop(MI, MBB, HCS08::SRL8);
   case HCS08::SRA8v: return emitShiftLoop(MI, MBB, HCS08::SRA8);
+  case HCS08::SHL16v:
+    return emitShiftLoop16(MI, MBB, HCS08::LSLsp, HCS08::ROLsp, true);
+  case HCS08::SRL16v:
+    return emitShiftLoop16(MI, MBB, HCS08::LSRsp, HCS08::RORsp, false);
+  case HCS08::SRA16v:
+    return emitShiftLoop16(MI, MBB, HCS08::ASRsp, HCS08::RORsp, false);
   case HCS08::ADD16rr: return emitALU16(MI, MBB, HCS08::ADD16m, false);
   case HCS08::SUB16rr: return emitALU16(MI, MBB, HCS08::SUB16m, false);
   case HCS08::AND16rr: return emitALU16(MI, MBB, HCS08::AND16m, false);

@@ -867,6 +867,22 @@ set(avr_SOURCES
   ${GENERIC_SOURCES}
 )
 
+# 8-bit Freescale HCS08 MCU. The hardware multiply is 8x8 and the hardware
+# divide is 16/8, so the 16-bit forms are written here; anything wider comes
+# from the generic sources, except the ones that only a target with a 16-bit
+# int needs and that compiler-rt therefore does not have.
+set(hcs08_SOURCES
+  hcs08/mulhi3.S
+  hcs08/udivmodhi4.S
+  hcs08/divhi3.c
+  hcs08/modhi3.c
+  hcs08/divqi3.c
+  hcs08/modqi3.c
+  hcs08/mulsi3.c
+  hcs08/shiftsi3.c
+  ${GENERIC_SOURCES}
+)
+
 # hexagon arch
 set(hexagon_SOURCES
   hexagon/common_entry_exit_abi1.S

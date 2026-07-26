@@ -1,0 +1,59 @@
+# RUN: llc -mtriple=hcs08 -run-pass=postrapseudos -verify-machineinstrs \
+# RUN:   %s -o - | FileCheck %s
+
+# Copies between the three bytes of the register file. A and X are one transfer
+# apart in both directions; H has no transfer at all and goes over the stack.
+# None of these instructions touches the condition codes.
+
+--- |
+  define void @copy_bytes() { ret void }
+  define void @copy_identity() { ret void }
+...
+---
+name: copy_bytes
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $a, $h
+
+    ; CHECK-LABEL: name: copy_bytes
+    ; CHECK: TAX implicit-def $x, implicit $a
+    $x = COPY $a
+
+    ; CHECK-NEXT: TXA implicit-def $a, implicit $x
+    $a = COPY $x
+
+    ; CHECK-NEXT: PSHA implicit $a
+    ; CHECK-NEXT: PULH implicit-def $h
+    $h = COPY $a
+
+    ; CHECK-NEXT: PSHX implicit killed $x
+    ; CHECK-NEXT: PULH implicit-def $h
+    $h = COPY killed $x
+
+    ; CHECK-NEXT: PSHH implicit $h
+    ; CHECK-NEXT: PULA implicit-def $a
+    $a = COPY $h
+
+    ; CHECK-NEXT: PSHH implicit killed $h
+    ; CHECK-NEXT: PULX implicit-def $x
+    $x = COPY killed $h
+
+    RTS implicit $a
+...
+---
+# A register copied to itself is not an instruction, at either width.
+name: copy_identity
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $a, $hx
+
+    ; CHECK-LABEL: name: copy_identity
+    ; CHECK-NOT: TAX
+    ; CHECK-NOT: PSH
+    ; CHECK: RTS
+    $a = COPY $a
+    $hx = COPY $hx
+    RTS implicit $a, implicit $hx
+...

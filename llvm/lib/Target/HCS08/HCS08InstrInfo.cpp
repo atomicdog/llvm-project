@@ -39,9 +39,50 @@ void HCS08InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                  const DebugLoc &DL, Register DestReg,
                                  Register SrcReg, bool KillSrc,
                                  bool RenamableDest, bool RenamableSrc) const {
-  // Phase 0 lowers only trivial functions and never copies between physical
-  // registers. Real copies (TAX/TXA, pshx/pulx, ...) land in Phase 1.
-  report_fatal_error("HCS08 copyPhysReg not yet implemented");
+  // A copy to the register it came from is erased before it reaches here, and
+  // H:X is the only 16-bit register, so every copy left is between two of the
+  // three bytes A, H and X.
+  if (DestReg == SrcReg)
+    return;
+
+  // These are the assembler's implicit-operand forms - "tax" names neither of
+  // the registers it touches - so what each one reads and writes has to be
+  // spelled out on the MachineInstr.
+  auto Transfer = [&](unsigned Opc) {
+    BuildMI(MBB, I, DL, get(Opc))
+        .addReg(DestReg, RegState::Define | RegState::Implicit)
+        .addReg(SrcReg, RegState::Implicit | getKillRegState(KillSrc));
+  };
+
+  // Nothing transfers to or from H, so those copies go over the stack. The
+  // pair has to stay adjacent: SP is one low in between, and an "n,sp" operand
+  // landing there would read the wrong byte.
+  auto ViaStack = [&](unsigned PushOpc, unsigned PullOpc) {
+    BuildMI(MBB, I, DL, get(PushOpc))
+        .addReg(SrcReg, RegState::Implicit | getKillRegState(KillSrc));
+    BuildMI(MBB, I, DL, get(PullOpc))
+        .addReg(DestReg, RegState::Define | RegState::Implicit);
+  };
+
+  // None of these six touch the condition codes, which is what lets the
+  // allocator insert a copy between a compare and the branch that reads it.
+  if (DestReg == HCS08::X && SrcReg == HCS08::A)
+    return Transfer(HCS08::TAX);
+  if (DestReg == HCS08::A && SrcReg == HCS08::X)
+    return Transfer(HCS08::TXA);
+  if (DestReg == HCS08::H && SrcReg == HCS08::A)
+    return ViaStack(HCS08::PSHA, HCS08::PULH);
+  if (DestReg == HCS08::H && SrcReg == HCS08::X)
+    return ViaStack(HCS08::PSHX, HCS08::PULH);
+  if (DestReg == HCS08::A && SrcReg == HCS08::H)
+    return ViaStack(HCS08::PSHH, HCS08::PULA);
+  if (DestReg == HCS08::X && SrcReg == HCS08::H)
+    return ViaStack(HCS08::PSHH, HCS08::PULX);
+
+  // SP is deliberately not reachable this way. tsx and txs look like the
+  // missing transfers but are off by one - tsx gives SP+1 and txs takes H:X-1 -
+  // so a copy lowered to either of them would be wrong by a byte.
+  report_fatal_error("cannot copy between these HCS08 registers");
 }
 
 void HCS08InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,

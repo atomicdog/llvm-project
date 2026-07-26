@@ -195,6 +195,7 @@ static MachineBasicBlock *emitStore16Indexed(MachineInstr &MI,
   int FI = getWord16Temp(MF, /*Second=*/false);
 
   Register Base = MI.getOperand(1).getReg();
+  bool BaseIsKill = MI.getOperand(1).isKill();
   int64_t Disp = MI.getOperand(2).getImm();
   BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
       .add(MI.getOperand(0)) // the value; dead after this, freeing H:X
@@ -206,13 +207,16 @@ static MachineBasicBlock *emitStore16Indexed(MachineInstr &MI,
     BuildMI(*MBB, MI, DL, TII.get(HCS08::LDAsp), Tmp)
         .addFrameIndex(FI)
         .addImm(Byte);
-    // The pointer stays live until the last byte is written. Displacement zero
-    // has a one-byte form of its own.
+    // The pointer stays live until the last byte is written - but only dies
+    // there if it was dying here at all. A 32-bit store is two of these
+    // through the same pointer, and killing it on the first one leaves the
+    // second using a register that liveness has been told is dead.
+    // Displacement zero has a one-byte form of its own.
     int64_t At = Disp + Byte;
     auto Store = BuildMI(*MBB, MI, DL,
                          TII.get(At == 0 ? HCS08::STAix : HCS08::STAix1))
                      .addReg(Tmp, RegState::Kill)
-                     .addReg(Base, getKillRegState(Byte == 1));
+                     .addReg(Base, getKillRegState(BaseIsKill && Byte == 1));
     if (At != 0)
       Store.addImm(At);
   }

@@ -133,6 +133,22 @@ define void @increment(ptr %p) {
   ret void
 }
 
+; Two 16-bit stores through one pointer, which is what a 32-bit store is. The
+; pointer has to survive the first of them: the byte-at-a-time expansion used
+; to mark it killed on its own last byte regardless of whether the store it
+; came from was the last use, so the second half then read a register liveness
+; had been told was dead. That is a machine-verifier error rather than a wrong
+; instruction, which is why this test is only as strong as -verify-machineinstrs.
+define void @store32(ptr %p, i32 %v) {
+; CHECK-LABEL: store32:
+; CHECK:       sta $02,x
+; CHECK:       sta $03,x
+; CHECK:       sta ,x
+; CHECK:       sta $01,x
+  store i32 %v, ptr %p
+  ret void
+}
+
 ; A global stays on the extended forms - it needs no index register.
 @g = global i8 0
 

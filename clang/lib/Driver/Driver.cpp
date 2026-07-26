@@ -26,6 +26,7 @@
 #include "ToolChains/HIPSPV.h"
 #include "ToolChains/HLSL.h"
 #include "ToolChains/Haiku.h"
+#include "ToolChains/HCS08.h"
 #include "ToolChains/Hexagon.h"
 #include "ToolChains/Hurd.h"
 #include "ToolChains/LFILinux.h"
@@ -7313,6 +7314,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         break;
       case llvm::Triple::avr:
         TC = std::make_unique<toolchains::AVRToolChain>(*this, Target, Args);
+        break;
+      case llvm::Triple::hcs08:
+        TC = std::make_unique<toolchains::HCS08ToolChain>(*this, Target, Args);
         break;
       case llvm::Triple::msp430:
         TC = std::make_unique<toolchains::MSP430ToolChain>(*this, Target, Args);

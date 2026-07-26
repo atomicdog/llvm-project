@@ -71,6 +71,7 @@ add_clang_library(clangDriver
   ToolChains/HIPUtility.cpp
   ToolChains/HIPAMD.cpp
   ToolChains/HIPSPV.cpp
+  ToolChains/HCS08.cpp
   ToolChains/Hexagon.cpp
   ToolChains/HLSL.cpp
   ToolChains/Hurd.cpp

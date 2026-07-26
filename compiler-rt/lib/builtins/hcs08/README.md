@@ -47,10 +47,15 @@ than taken wholesale. Most of that set is soft float and complex arithmetic,
 which this target has no support for and which exhausts its one accumulator
 during register allocation.
 
-**The 64-bit routines are not built.** `udivmoddi4.c` does not finish
-compiling - it was still going after twenty-five minutes, which is a
-compile-time explosion rather than slow code, presumably from register
-pressure on a target with one accumulator. `__muldi3` compiles, but without
-the division routines the tier is incomplete, so none of it is included.
-Anything needing a 64-bit divide will fail to link, which is the honest
-signal.
+**64-bit division is missing.** `udivmoddi4.c` exhausts the register
+allocator, and `__udivdi3` and `__umoddi3` are written in terms of it, so
+none of the three is built and a 64-bit divide fails to link. Multiplication
+and the shifts are here and work.
+
+An earlier version of this file blamed a compile-time explosion for that,
+which was wrong twice over: the explosion was an infinite loop in branch
+folding caused by a bug in `removeBranch`, and it had nothing to do with this
+target's register pressure. With that fixed, `udivmoddi4.c` fails in under a
+second with a diagnosis. The remaining failure is genuinely allocation, and
+is the strongest argument so far for the direct-page register file in
+CodeGenDesign.md.

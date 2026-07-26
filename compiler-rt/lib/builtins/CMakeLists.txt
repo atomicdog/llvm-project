@@ -891,6 +891,10 @@ set(hcs08_SOURCES
   udivmodsi4.c
   udivsi3.c
   umodsi3.c
+  ashldi3.c
+  ashrdi3.c
+  lshrdi3.c
+  muldi3.c
 )
 
 # hexagon arch

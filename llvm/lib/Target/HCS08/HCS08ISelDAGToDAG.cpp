@@ -88,7 +88,10 @@ bool HCS08DAGToDAGISel::SelectStackAddr(SDValue Addr, SDValue &Base,
     return false;
 
   Base = CurDAG->getTargetFrameIndex(FIN->getIndex(), MVT::i16);
-  Disp = CurDAG->getTargetConstant(Off, dl, MVT::i8);
+  // i16, not i8: the displacement is unsigned and reaches 255, but the value
+  // reaches the MachineOperand through getSExtValue, so an 8-bit constant node
+  // would deliver 198 as -58 - a different frame object, silently.
+  Disp = CurDAG->getTargetConstant(Off, dl, MVT::i16);
   return true;
 }
 
@@ -133,7 +136,9 @@ bool HCS08DAGToDAGISel::SelectIndexedAddr(SDValue Addr, SDValue &Base,
     return false;
 
   Base = Addr.getOperand(0);
-  Disp = CurDAG->getTargetConstant(Off, SDLoc(Addr), MVT::i8);
+  // i16 for the same reason as the stack displacement above: this one is
+  // unsigned to 254 and an 8-bit node would sign-extend the top half of that.
+  Disp = CurDAG->getTargetConstant(Off, SDLoc(Addr), MVT::i16);
   return true;
 }
 

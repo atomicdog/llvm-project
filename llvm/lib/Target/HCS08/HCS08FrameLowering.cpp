@@ -25,19 +25,34 @@ bool HCS08FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   return false;
 }
 
+/// Move SP by Amount, which ais can only do a signed byte at a time.
+///
+/// A frame bigger than that takes more than one, which is two bytes each and
+/// still cheaper than the tsx/aix/txs round trip - aix takes a signed byte too,
+/// so that would need just as many and clobber H:X besides. The asymmetry is
+/// real and worth spelling out: allocating can step -128 but freeing can only
+/// step +127, so the two directions do not always use the same count.
+static void adjustSP(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                     const DebugLoc &DL, const TargetInstrInfo &TII,
+                     int64_t Amount) {
+  while (Amount != 0) {
+    int64_t Step = Amount < 0 ? std::max<int64_t>(Amount, -128)
+                              : std::min<int64_t>(Amount, 127);
+    BuildMI(MBB, MBBI, DL, TII.get(HCS08::AISi)).addImm(Step);
+    Amount -= Step;
+  }
+}
+
 void HCS08FrameLowering::emitPrologue(MachineFunction &MF,
                                       MachineBasicBlock &MBB) const {
   int64_t StackSize = MF.getFrameInfo().getStackSize();
   if (StackSize == 0)
     return;
 
-  // ais takes a signed byte; larger frames need a different sequence.
-  assert(StackSize <= 128 && "HCS08 frame too large for a single ais");
-
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   MachineBasicBlock::iterator MBBI = MBB.begin();
   DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
-  BuildMI(MBB, MBBI, DL, TII.get(HCS08::AISi)).addImm(-StackSize);
+  adjustSP(MBB, MBBI, DL, TII, -StackSize);
 }
 
 void HCS08FrameLowering::emitEpilogue(MachineFunction &MF,
@@ -49,7 +64,7 @@ void HCS08FrameLowering::emitEpilogue(MachineFunction &MF,
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   MachineBasicBlock::iterator MBBI = MBB.getFirstTerminator();
   DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
-  BuildMI(MBB, MBBI, DL, TII.get(HCS08::AISi)).addImm(StackSize);
+  adjustSP(MBB, MBBI, DL, TII, StackSize);
 }
 
 MachineBasicBlock::iterator HCS08FrameLowering::eliminateCallFramePseudoInstr(

@@ -501,6 +501,39 @@ compiler or the linker will say so. This target has no interrupt attribute yet.
 When it gets one, a handler has to save and restore the bank - all of it,
 since without a call graph it cannot know which bytes its callees use.
 
+## 19. The frame stops at 256 bytes, and it has to say so
+
+Three separate widths bound a frame on this machine, and all three used to be
+guarded by an `assert` - which is to say by nothing at all in a release build,
+where the value was truncated and codegen carried on.
+
+- **`ais` moves SP by a *signed* byte.** A frame over 127 wrapped. 128 was the
+  worst case, because -128 encodes and +128 does not: the epilogue subtracted
+  where it meant to add and returned with SP 256 bytes low. Any size works now,
+  one `ais` per 128 down or 127 up - two bytes each, and cheaper than the
+  `tsx`/`aix`/`txs` round trip, which needs just as many steps for the same
+  reason and costs H:X besides.
+- **The `n,sp` displacement is one *unsigned* byte**, but instruction selection
+  built it as an `i8` node, and the value reaches the MachineOperand through
+  `getSExtValue`. So a displacement of 198 arrived as -58 and addressed an
+  object 256 bytes away. The constant is `i16` now; the range check on it was
+  already right, which is what made this so quiet.
+- **Past 255 nothing reaches the object.** `lda` and `sta` have `$nnnn,sp`,
+  `ldhx`, `sthx` and `cphx` do not, so the general answer is to compute the
+  address into H:X and index from there - which needs a scavenged register and
+  is not implemented. This is now a `report_fatal_error` naming the function
+  and the offset. Refusing to compile is worse than the fix and much better
+  than a silent wrong access.
+
+The last of those is a real ceiling, not a formality: **frame plus incoming
+stack arguments together must fit in 256 bytes**. Four compiler-rt sources
+exceed it - `__divdc3` at 573, `__divsc3` at 309, `__divdf3` at 302 and
+`__muldc3` at 260 - and every one of them was being silently miscompiled
+before. All four are soft float or complex arithmetic, neither of which is an
+enabled tier, so nothing shipped wrong; but the failure mode was the one that
+does not announce itself, and on a part with one or two kilobytes of RAM a
+256-byte frame is not far away.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

@@ -67,8 +67,22 @@ bool HCS08RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   int64_t Offset = MFI.getObjectOffset(FI) + (int64_t)MFI.getStackSize() + 1;
   Offset += MI.getOperand(FIOperandNum + 1).getImm();
 
-  assert(Offset >= 0 && isUInt<8>(Offset) &&
-         "HCS08 SP-relative offset out of range (needs SP2/H:X base)");
+  // The displacement of every n,sp form is one unsigned byte, so a frame
+  // object more than 255 bytes above SP cannot be reached by one at all. It
+  // would need the $nnnn,sp forms - which lda and sta have and ldhx, sthx and
+  // cphx do not - or the address computed into H:X, and neither is implemented.
+  //
+  // This was an assert, which is to say that a release build wrote the low byte
+  // of the offset and carried on: an access to a different frame object, chosen
+  // by arithmetic, with nothing said. Refusing is worse code than the fix and
+  // better than that.
+  if (Offset < 0 || !isUInt<8>(Offset))
+    report_fatal_error(
+        "HCS08 frame object out of reach at SP+" + Twine(Offset) + " in '" +
+            MF.getName() +
+            "': the n,sp displacement is one byte, so the frame and any "
+            "incoming stack arguments have to fit in 256 bytes together",
+        /*GenCrashDiag=*/false);
 
   MI.getOperand(FIOperandNum).ChangeToRegister(HCS08::SP, /*isDef=*/false);
   MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);

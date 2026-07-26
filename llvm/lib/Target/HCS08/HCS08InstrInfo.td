@@ -965,8 +965,13 @@ def CMPBR : HCS08Inst<6, AddrModeNone, (outs),
                        variable_ops), "", []>;
 
 // Unconditional branch, custom-selected from ISD::BR (see HCS08ISelDAGToDAG).
-let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isCodeGenOnly = 1 in {
 def BRAcc : F16<0x20, AddrModeRel, (outs), (ins brtarget2:$b0), "bra\t$b0", []>;
+
+// The same reach as the whole address space, for when the relative branch
+// cannot get there. Branch relaxation rewrites into this.
+def JMPa : F24<0xCC, AddrModeExt, (outs), (ins imm16:$w0), "jmp\t$w0", []>;
+}
 
 //===----------------------------------------------------------------------===//
 // Stack-relative load/store and stack-pointer adjust (code generation).

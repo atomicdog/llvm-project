@@ -49,6 +49,7 @@ public:
 
   bool addInstSelector() override;
   void addPreRegAlloc() override;
+  void addPreEmitPass() override;
 };
 } // namespace
 
@@ -66,6 +67,12 @@ MachineFunctionInfo *HCS08TargetMachine::createMachineFunctionInfo(
 bool HCS08PassConfig::addInstSelector() {
   addPass(createHCS08ISelDag(getHCS08TargetMachine(), getOptLevel()));
   return false;
+}
+
+void HCS08PassConfig::addPreEmitPass() {
+  // Relative branches reach a signed byte, which real code does not stay
+  // inside; out-of-range ones become jmp.
+  addPass(&BranchRelaxationPassID);
 }
 
 void HCS08PassConfig::addPreRegAlloc() {

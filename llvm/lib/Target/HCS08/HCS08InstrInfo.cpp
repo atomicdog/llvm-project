@@ -348,3 +348,33 @@ bool HCS08InstrInfo::reverseBranchCondition(
   Cond[0].setImm(getOppositeBranchOpc(Cond[0].getImm()));
   return false;
 }
+
+unsigned HCS08InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
+  // Every instruction on this target has a fixed size, which the format
+  // classes record. The pseudos that survive to be measured carry the size of
+  // what they expand into.
+  return MI.getDesc().getSize();
+}
+
+bool HCS08InstrInfo::isBranchOffsetInRange(unsigned BranchOpc,
+                                           int64_t BrOffset) const {
+  // jmp is a 16-bit absolute address and so reaches anywhere.
+  if (BranchOpc == HCS08::JMPa)
+    return true;
+  // Everything else is a signed byte measured from the end of the instruction.
+  return isInt<8>(BrOffset);
+}
+
+MachineBasicBlock *
+HCS08InstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
+  return MI.getOperand(0).getMBB();
+}
+
+void HCS08InstrInfo::insertIndirectBranch(MachineBasicBlock &MBB,
+                                          MachineBasicBlock &NewDestBB,
+                                          MachineBasicBlock &RestoreBB,
+                                          const DebugLoc &DL, int64_t BrOffset,
+                                          RegScavenger *RS) const {
+  // jmp needs no register, so there is nothing to scavenge or restore.
+  BuildMI(&MBB, DL, get(HCS08::JMPa)).addMBB(&NewDestBB);
+}

@@ -63,6 +63,20 @@ public:
                         int *BytesAdded = nullptr) const override;
   bool
   reverseBranchCondition(SmallVectorImpl<MachineOperand> &Cond) const override;
+
+  // Branch relaxation. Every conditional branch here reaches a signed byte
+  // from the end of the instruction, which no function of any size stays
+  // inside.
+  // Branch relaxation measures distances by adding these up; the default
+  // says "unknown", which makes every distance meaningless.
+  unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
+  bool isBranchOffsetInRange(unsigned BranchOpc,
+                             int64_t BrOffset) const override;
+  MachineBasicBlock *getBranchDestBlock(const MachineInstr &MI) const override;
+  void insertIndirectBranch(MachineBasicBlock &MBB,
+                            MachineBasicBlock &NewDestBB,
+                            MachineBasicBlock &RestoreBB, const DebugLoc &DL,
+                            int64_t BrOffset, RegScavenger *RS) const override;
 };
 
 } // namespace llvm

@@ -600,7 +600,7 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
   // HCS08: big endian, 16-bit pointers, no alignment requirements on
   // any access, and an 8-bit ALU with 16-bit index/stack registers.
   case Triple::hcs08:
-    return "E-m:e-p:16:16-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0:8-n8:16-S8";
+    return "E-m:e-p:16:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0:8-n8:16-S8";
   case Triple::mips:
   case Triple::mipsel:
   case Triple::mips64:

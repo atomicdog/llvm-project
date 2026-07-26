@@ -730,9 +730,12 @@ SDValue HCS08TargetLowering::LowerSELECT_CC(SDValue Op,
 
   SDValue Flag = DAG.getNode(HCS08ISD::CMP, dl, MVT::Glue, LHS, RHS);
   SDValue TargetCC = DAG.getConstant(translateCC(CC), dl, MVT::i8);
-  SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
-  return DAG.getNode(HCS08ISD::SELECT_CC, dl, VTs, TrueV, FalseV, TargetCC,
-                     Flag);
+  // One result and no outgoing glue, which is what SDT_HCS08SelectCC declares
+  // and what the pattern matches. Asking for a {value, glue} pair built a node
+  // the DAG verifier rejects - and nothing consumed the glue: the incoming
+  // glue from the compare is what holds the two together.
+  return DAG.getNode(HCS08ISD::SELECT_CC, dl, Op.getValueType(), TrueV, FalseV,
+                     TargetCC, Flag);
 }
 
 SDValue HCS08TargetLowering::LowerGlobalAddress(SDValue Op,

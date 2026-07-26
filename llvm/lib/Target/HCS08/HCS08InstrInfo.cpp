@@ -144,10 +144,17 @@ void HCS08InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
   else
     report_fatal_error("cannot store this register class to a stack slot");
 
+  // Spill code writes NZV and nothing ever reads it back: a compare is welded
+  // to its branch before allocation (section 14), so the flags are not live
+  // across an arbitrary instruction, and the one thing that does travel - the
+  // carry of a 16-bit chain - is register C, which these do not touch. Saying
+  // so is what lets the spiller delete one of these when it turns out to be
+  // redundant; without it allDefsAreDead is false and it cannot.
   BuildMI(MBB, MI, DL, get(Opc))
       .addReg(SrcReg, getKillRegState(isKill))
       .addFrameIndex(FrameIndex)
-      .addImm(0);
+      .addImm(0)
+      ->addRegisterDead(HCS08::NZV, &RI);
 }
 
 void HCS08InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
@@ -165,7 +172,10 @@ void HCS08InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   else
     report_fatal_error("cannot load this register class from a stack slot");
 
-  BuildMI(MBB, MI, DL, get(Opc), DestReg).addFrameIndex(FrameIndex).addImm(0);
+  BuildMI(MBB, MI, DL, get(Opc), DestReg)
+      .addFrameIndex(FrameIndex)
+      .addImm(0)
+      ->addRegisterDead(HCS08::NZV, &RI);
 }
 
 bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {

@@ -41,7 +41,7 @@ public:
     // store is a byte at a time or an index register pair, and neither cares.
     // Aligning would only make objects bigger on a part with a few hundred
     // bytes of RAM.
-    IntAlign = LongAlign = LongLongAlign = 8;
+    ShortAlign = IntAlign = LongAlign = LongLongAlign = 8;
     PointerAlign = 8;
     FloatAlign = DoubleAlign = LongDoubleAlign = 8;
     DefaultAlignForAttributeAligned = 8;

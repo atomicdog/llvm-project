@@ -17,6 +17,7 @@ add_public_tablegen_target(HCS08CommonTableGen)
 
 add_llvm_target(HCS08CodeGen
   HCS08AsmPrinter.cpp
+  HCS08DirectPageBank.cpp
   HCS08FrameLowering.cpp
   HCS08FuseCompareBranch.cpp
   HCS08ISelDAGToDAG.cpp

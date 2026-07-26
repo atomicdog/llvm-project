@@ -49,6 +49,15 @@ migrate the register classes to Model B for quality. Model A code is throwaway
 on the allocation side, but everything else (ISel patterns, ABI, frame,
 AsmPrinter, libcalls) carries straight over.
 
+**Superseded in part - read §17 before acting on Model B.** Two claims above
+did not survive contact with the evidence. Neither CodeWarrior nor SDCC uses
+the zero page as a register file: a CW-built MC9S08AW60 image leaves all 128
+bytes of it empty and works entirely from stack frames, and SDCC's whole global
+bank is the six bytes of `___SDCC_hc08_ret2..ret7`. And under the decision to
+target reentrant code, a general imaginary register file has nothing to hold.
+The direct page is still worth taking, but as the much smaller thing §17
+describes.
+
 ## 3. Register `.td` rework (needed before any codegen)
 
 The current classes are MC-shaped and wrong for allocation:
@@ -372,9 +381,124 @@ The idea is not ours: a CodeWarrior-built MC9S08AW60 image reads 480 `tsx`
 against 712 remaining plain `n,sp` uses, so it prefers this form roughly two to
 one wherever the index register is free.
 
+## 17. The direct-page bank is a spill space, not a register file
+
+§2 planned Model B as llvm-mos's imaginary register file - sixteen to thirty
+two imaginary registers in the direct page, with the allocator treating them as
+real. Two things since have made that the wrong shape for this machine. The
+first is the decision that this compiler targets reentrant code, which puts
+parameters and locals on the stack and leaves a general register file nothing
+to hold. The second is §16, which took away most of the size argument: `lda
+$02,x` is two bytes and so is `lda $50`, so wherever H:X is free the frame is
+already as cheap as the page. A bank of general 8-bit locals now buys nothing.
+
+What survives is narrower, and none of it overlaps §16.
+
+**H:X spills, which §16 cannot reach.**
+
+    sthx    dir 2 ($35)   n,sp 3 (9E FF)   n,x  no such form
+    ldhx    dir 2 ($55)   n,sp 3 (9E FE)   n,x  3 (9E CE)
+    cphx    dir 2 ($75)   n,sp 3 (9E F3)   n,x  no such form
+
+`STHXix` in the `.td` is a pseudo with no opcode because the ISA has no indexed
+store of H:X, and the indexed loads are themselves page 2. The `tsx` trick
+cannot save H:X, since H:X is what is being saved. So the park-and-reload round
+trip between two consecutive 16-bit operations is six bytes on the stack and
+four in the page, and the page is the only thing that shortens it. §16 lists
+this as left on the table; this is what takes it.
+
+**The operations that exist only in the direct page.** `bset`/`bclr` (2 bytes)
+and `brset`/`brclr` (3) have no stack or indexed form at any price, and neither
+does `mov` in any of its four. On a frame slot a bit set is `lda`/`ora`/`sta` -
+six bytes against two - and a bit test and branch is `lda`/`and`/`beq`, six
+against three. Size is not the whole of it: with one accumulator, what these
+really save is A, which the load-modify-store sequence destroys. `mov #$01,$50`
+is three bytes and leaves A alone where `lda #$01` / `sta $02,x` is four and
+does not.
+
+**Scratch that survives H:X being busy.** §16's binding constraint is that H:X
+must be dead across the run, so pointer-heavy code - which keeps a pointer
+there - gets nothing from it and reverts to `n,sp` and its extra byte. A
+direct-page slot is reachable with H:X loaded. `dbnz` and `cbeq` land here too:
+three bytes direct against four for `n,sp`, but `dbnz $n,x` is also three, so
+they are a byte only while the index register is unavailable.
+
+**What actually lives there.** Not parameters and not locals - reentrancy
+settled those onto the stack, and §15 already hands the user the page by
+`__attribute__((page0))`. What is left is compiler scratch whose live range
+does not cross a call: the H:X park slot, carry-chain temporaries, the
+intermediates of an address computation. That restriction is not a limitation
+to work around, it is the design. A fixed global address live across a call has
+to be saved and restored, and that is four bytes or more, which immediately
+eats the two the direct-page form saved. So nothing is allocated across a call,
+and what remains is intra-block windows - a spill space of a few bytes, not a
+register file of sixteen.
+
+**Where the bank comes from.** The part-specific window size - which §2 left as
+the unsolved tension between a link-time budget and compile-time register
+classes - is answered the way §15 answers it. `__hcs08_dp_bank` is an undefined
+symbol that the linker script places in the page, so a bank the script does not
+reserve is an undefined-symbol error and one it puts above `$00FF` is an
+`R_HCS08_8` overflow. Neither fails quietly, and the compiler never picks the
+address.
+
+## 18. What the bank turned out to be worth
+
+`HCS08DirectPageBank` implements §17, and measuring it moved two of that
+section's conclusions.
+
+**It is a rewrite pass, not a register class.** §17 proposed modelling the
+slots as caller-saved registers and letting the allocator enforce
+never-live-across-a-call for free. That does not work here, because a bank slot
+can never be an operand the way a register is: there is no `lda <slot>` where
+the slot is a register number, only `lda` with a direct-page *address*, so
+every use has to become a different opcode. Promotion is therefore a rewrite,
+and the rule has to be checked rather than inherited. The pass runs after
+`expandPostRAPseudo`, where a spill slot is only ever `lda`/`sta`/`ldhx`/`sthx`
+- the 8-bit ALU column reads the *other* operand of a 16-bit chain, never the
+parked one - and walks each block tracking which bytes of the slot the bank
+could be standing in for. A call clears that, so does entering a block; a read
+of a byte the bank was never given means the value arrived from somewhere the
+bank does not reach, and the whole slot stays in the frame. Promoting only the
+accesses that pair up would leave one value split between two places.
+
+**The win is much smaller than §16's, and for a reason §17 half-stated.**
+Over 155 compiler-rt sources the bank saves 829 bytes of `.text`, 0.50%: 45
+sources smaller, 110 unchanged, none larger. Four bytes of bank is worth as
+much as sixteen. That is because §16 already recovers the byte on exactly the
+accesses the bank would otherwise recover it on - a promoted `lda` saves one
+byte, and so did the `n,x` form it would have had - so promoting a run also
+*shortens* it, and the `tsx` that was amortised over six accesses is now
+amortised over two. What is left is the genuine part: `sthx`/`ldhx`, which §16
+cannot touch at all, at two bytes per park. §17 predicted six bytes to four on
+the round trip and that is precisely what arrives.
+
+**The frame object is not reclaimed, and that is the biggest thing left.**
+Running after `expandPostRAPseudo` means running after `PrologEpilogInserter`,
+so the slot has already been allocated and the `ais` pair that allocates it
+stays. A function whose frame exists *only* for promoted slots therefore keeps
+a prologue and epilogue it no longer needs: `add16` goes from 24 bytes to 22
+where an unreclaimed 4 bytes of `ais` would have taken it to 18. The fix is not
+to move this pass earlier - before expansion the slot is still hidden inside
+`ADD16m` - but to hand the ALU16 and indexed-store helpers a bank slot at
+instruction-selection time instead of calling `CreateSpillStackObject`. Those
+temporaries are safe by construction, since each one is parked and collected
+inside a single expansion that contains no call, so they need none of the
+analysis above. That is worth more than this pass gets and it is the next step.
+
+**One hazard to write down before interrupts exist.** The bank is one object
+shared by the whole program, which is sound only because nothing in it is live
+across a call. An interrupt is not a call: a handler that reaches any promoted
+code will overwrite the interrupted function's window, and nothing in the
+compiler or the linker will say so. This target has no interrupt attribute yet.
+When it gets one, a handler has to save and restore the bank - all of it,
+since without a call graph it cannot know which bytes its callees use.
+
 ## Bottom line
 
-Phase 0 -> 1 on Model A gets a *correct* compiler quickly, treating Model B
-(the direct-page register file) as the real architecture to migrate to for
-usable code. Everything except register allocation is shared between the two
-models, so the Model A work is not wasted.
+Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2
+imagined it - a general imaginary register file - is superseded by §17: what
+the direct page is worth on this machine is a small call-free spill space
+beside the stack, not a bank instead of it. Everything except register
+allocation was shared between the two models either way, so the Model A work is
+not wasted.

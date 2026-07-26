@@ -70,6 +70,11 @@ bool HCS08PassConfig::addInstSelector() {
 }
 
 void HCS08PassConfig::addPreEmitPass() {
+  // Ahead of the pass below, which would otherwise spend a tsx on accesses
+  // that are about to leave the frame entirely. Like it, this wants
+  // expandPostRAPseudo to have run: a spill slot is only recognisable as one
+  // load and one store once the 16-bit pseudos it feeds have come apart.
+  addPass(createHCS08DirectPageBankPass());
   // Shortens instructions, so it has to run before anything measures them -
   // and after expandPostRAPseudo, which is what produces the 16-bit ALU chains
   // that are the best runs it finds.

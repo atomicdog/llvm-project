@@ -48,10 +48,16 @@ FunctionPass *createHCS08FuseCompareBranchPass();
 /// without the page-2 prefix, wherever H:X is free to hold the frame base.
 FunctionPass *createHCS08StackToIndexedPass();
 
+/// Moves spill slots that are never live across a call out of the frame and
+/// into a direct-page bank shared by the whole program, which is a byte
+/// shorter to reach and does not need the index register.
+FunctionPass *createHCS08DirectPageBankPass();
+
 void initializeHCS08DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeHCS08AsmPrinterPass(PassRegistry &);
 void initializeHCS08FuseCompareBranchPass(PassRegistry &);
 void initializeHCS08StackToIndexedPass(PassRegistry &);
+void initializeHCS08DirectPageBankPass(PassRegistry &);
 
 } // namespace llvm
 

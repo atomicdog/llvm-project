@@ -321,6 +321,57 @@ traditional Freescale spelling, and the compiler emits the `<`. That is what
 something else (`#<expr` is the low byte), and before an `n,sp` displacement it
 would mean nothing at all.
 
+## 16. The frame is a byte cheaper through H:X
+
+Every stack-relative form on this machine is on page 2, and the page-2 opcode
+byte is the same one the indexed form uses: `lda $03,sp` is `9E E6 03` where
+`lda $02,x` is `E6 02`. So a frame access through the index register is the
+same instruction without the prefix, and `tsx` - which yields SP+1, hence the
+displacement losing one - buys the whole run for a byte.
+
+`HCS08StackToIndexed` does this after `expandPostRAPseudo`, which is what
+produces the runs worth rewriting. The one that matters is the 16-bit ALU
+chain: six frame accesses between the `sthx` that parks the operand and the
+`ldhx` that collects the result, with H:X dead for all of them, because
+parking the operand is precisely what freed it.
+
+    ais  #$fe            ais  #$fe
+    sthx $01,sp          sthx $01,sp
+    lda  $02,sp          tsx
+    add  $06,sp          lda  $01,x
+    sta  $02,sp    ->    add  $05,x
+    lda  $01,sp          sta  $01,x
+    adc  $05,sp          lda  $00,x
+    sta  $01,sp          adc  $04,x
+    ldhx $01,sp          sta  $00,x
+    ais  #$02            ldhx $01,sp
+    rts                  ais  #$02
+                         rts
+    29 bytes             24 bytes
+
+Three facts make a run safe to form, and the pass checks or relies on each:
+
+- **H:X must be dead across it.** With one index register that is the binding
+  constraint, and it is why a function that returns an `i16` converts nothing
+  after the value reaches H:X - `LowerReturn` puts the return register in the
+  `rts` operands, so liveness sees it.
+- **SP must not move.** `hasReservedCallFrame` is true, so it does not, and the
+  pass refuses to cross anything that writes it or has unmodelled side effects
+  - which is what turns away the push/pull pairs, since `psha`/`pula` move SP
+  without ever naming H:X.
+- **`tsx` sets no condition code.** That is what lets a run span a carry chain,
+  the thing the 16-bit chain exists to protect.
+
+Worth 47% of all frame accesses and 11% of code size over compiler-rt's 78
+sources (186442 -> 166022 bytes). What is left on the table: `ldhx`/`sthx` gain
+nothing (the 16-bit indexed forms are themselves page 2, and `sthx` has no
+indexed form at all), displacement 1 could use the one-byte `,x` form rather
+than `$00,x`, and outgoing-argument stores are not candidates yet.
+
+The idea is not ours: a CodeWarrior-built MC9S08AW60 image reads 480 `tsx`
+against 712 remaining plain `n,sp` uses, so it prefers this form roughly two to
+one wherever the index register is free.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly, treating Model B

@@ -8,6 +8,9 @@
 ; n,sp addresses SP+n and SP sits one byte below the last thing pushed, so a
 ; one-byte frame puts its only slot at 1,sp. 0,sp would be the byte the next
 ; push takes - a slot there would be destroyed by the next call.
+;
+; The slot is reached through H:X rather than SP: tsx yields SP+1, so 1,sp is
+; 0,x, and the indexed form is a byte shorter. See HCS08StackToIndexed.
 
 @g = global i8 0
 @g2 = global i8 0
@@ -17,9 +20,10 @@ define void @spill() {
 ; CHECK-LABEL: spill:
 ; CHECK:       ais #$ff
 ; CHECK:       lda g
-; CHECK-NEXT:  sta $01,sp
+; CHECK-NEXT:  tsx
+; CHECK-NEXT:  sta $00,x
 ; CHECK:       add #$01
-; CHECK:       lda $01,sp
+; CHECK:       lda $00,x
 ; CHECK-NEXT:  add #$02
 ; CHECK:       ais #$01
 ; CHECK-NEXT:  rts

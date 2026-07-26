@@ -25,8 +25,9 @@ define i8 @callee_noframe(i8 %a, i8 %b, i8 %c) {
 define i8 @callee_leaf(i8 %a, i8 %b, i8 %c) {
 ; CHECK-LABEL: callee_leaf:
 ; CHECK-NOT:   ais
-; CHECK:       lda $03,sp
-; CHECK-NEXT:  add $04,sp
+; CHECK:       tsx
+; CHECK-NEXT:  lda $02,x
+; CHECK-NEXT:  add $03,x
 ; CHECK-NEXT:  rts
   %t = add i8 %b, %c
   ret i8 %t
@@ -38,8 +39,8 @@ define i8 @callee_leaf(i8 %a, i8 %b, i8 %c) {
 define i8 @callee_framed(i8 %a, i8 %b, i8 %c) {
 ; CHECK-LABEL: callee_framed:
 ; CHECK:       ais #$fd
-; CHECK:       lda $06,sp
-; CHECK-NEXT:  add $07,sp
+; CHECK:       lda $05,x
+; CHECK-NEXT:  add $06,x
   %t = add i8 %b, %c
   %u = add i8 %t, %a
   ret i8 %u

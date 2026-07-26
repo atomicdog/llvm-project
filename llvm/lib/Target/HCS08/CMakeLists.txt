@@ -26,6 +26,7 @@ add_llvm_target(HCS08CodeGen
   HCS08MachineFunctionInfo.cpp
   HCS08RegisterInfo.cpp
   HCS08SelectionDAGInfo.cpp
+  HCS08StackToIndexed.cpp
   HCS08Subtarget.cpp
   HCS08TargetMachine.cpp
 

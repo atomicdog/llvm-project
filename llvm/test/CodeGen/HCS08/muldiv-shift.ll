@@ -43,7 +43,7 @@ define i8 @remainder(i8 %a, i8 %b) {
 ; has to skip the loop rather than wrap around.
 define i8 @shift_left(i8 %a, i8 %b) {
 ; CHECK-LABEL: shift_left:
-; CHECK:       tst ${{[0-9a-f]+}},sp
+; CHECK:       tst ${{[0-9a-f]+}},x
 ; CHECK-NEXT:  beq
 ; CHECK:       lsla
 ; CHECK-NEXT:  dec ${{[0-9a-f]+}},sp

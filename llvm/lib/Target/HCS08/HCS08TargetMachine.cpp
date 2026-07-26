@@ -70,6 +70,10 @@ bool HCS08PassConfig::addInstSelector() {
 }
 
 void HCS08PassConfig::addPreEmitPass() {
+  // Shortens instructions, so it has to run before anything measures them -
+  // and after expandPostRAPseudo, which is what produces the 16-bit ALU chains
+  // that are the best runs it finds.
+  addPass(createHCS08StackToIndexedPass());
   // Relative branches reach a signed byte, which real code does not stay
   // inside; out-of-range ones become jmp.
   addPass(&BranchRelaxationPassID);

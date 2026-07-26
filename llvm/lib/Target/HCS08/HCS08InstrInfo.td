@@ -1055,6 +1055,47 @@ let isCodeGenOnly = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in
 def AISi : F16<0xA7, AddrModeImm, (outs), (ins imm8:$b0), "ais\t#$b0", []>;
 
 //===----------------------------------------------------------------------===//
+// Index-register forms of the frame accesses.
+//
+// Every stack-relative form is on page 2, and the page-2 opcode byte is the
+// same as the n,x one: "lda $03,sp" is 9E E6 03 where "lda $02,x" is E6 02. So
+// a frame access through H:X is the same instruction a byte shorter, and
+// HCS08StackToIndexed rewrites runs of them once tsx has put the frame base
+// there. These are the forms it rewrites to, for the operations whose n,x form
+// is not already defined above with a pattern. Nothing selects them.
+//===----------------------------------------------------------------------===//
+
+let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1 in {
+  let Constraints = "$src = $dst", Defs = [NZV, C], Uses = [C] in {
+    def ADC8ix1 : F16<0xE9, AddrModeIx1, (outs GR8:$dst),
+                      (ins GR8:$src, ixmem:$b0), "adc\t$b0", []>;
+    def SBC8ix1 : F16<0xE2, AddrModeIx1, (outs GR8:$dst),
+                      (ins GR8:$src, ixmem:$b0), "sbc\t$b0", []>;
+  }
+
+  let Defs = [X, NZV] in
+  def LDXix1 : F16<0xEE, AddrModeIx1, (outs), (ins ixmem:$b0), "ldx\t$b0", []>;
+
+  let Defs = [NZV] in {
+    def TSTix1 : F16<0x6D, AddrModeIx1, (outs), (ins ixmem:$b0), "tst\t$b0", []>;
+    let mayStore = 1 in
+    def DECix1 : F16<0x6A, AddrModeIx1, (outs), (ins ixmem:$b0), "dec\t$b0", []>;
+  }
+
+  let mayStore = 1 in {
+    let Defs = [NZV, C] in {
+      def LSLix1 : F16<0x68, AddrModeIx1, (outs), (ins ixmem:$b0), "lsl\t$b0", []>;
+      def LSRix1 : F16<0x64, AddrModeIx1, (outs), (ins ixmem:$b0), "lsr\t$b0", []>;
+      def ASRix1 : F16<0x67, AddrModeIx1, (outs), (ins ixmem:$b0), "asr\t$b0", []>;
+    }
+    let Defs = [NZV, C], Uses = [C] in {
+      def ROLix1 : F16<0x69, AddrModeIx1, (outs), (ins ixmem:$b0), "rol\t$b0", []>;
+      def RORix1 : F16<0x66, AddrModeIx1, (outs), (ins ixmem:$b0), "ror\t$b0", []>;
+    }
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // Calls (code generation).
 //===----------------------------------------------------------------------===//
 

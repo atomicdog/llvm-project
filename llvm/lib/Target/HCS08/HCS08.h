@@ -44,9 +44,14 @@ FunctionPass *createHCS08ISelDag(HCS08TargetMachine &TM,
 /// it reads, so that register allocation cannot insert a reload between them.
 FunctionPass *createHCS08FuseCompareBranchPass();
 
+/// Rewrites runs of n,sp frame accesses to n,x, which is the same instruction
+/// without the page-2 prefix, wherever H:X is free to hold the frame base.
+FunctionPass *createHCS08StackToIndexedPass();
+
 void initializeHCS08DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeHCS08AsmPrinterPass(PassRegistry &);
 void initializeHCS08FuseCompareBranchPass(PassRegistry &);
+void initializeHCS08StackToIndexedPass(PassRegistry &);
 
 } // namespace llvm
 

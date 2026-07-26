@@ -100,7 +100,7 @@ define i16 @clamp_low(i16 %a) {
 ; either: the custom inserter parks it, exactly as the reg-reg ALU is parked.
 define i8 @umax8(i8 %a, i8 %b) {
 ; CHECK-LABEL: umax8:
-; CHECK:       cmp ${{[0-9a-f]+}},sp
+; CHECK:       cmp ${{[0-9a-f]+}},x
 ; CHECK-NEXT:  bhi
   %c = icmp ugt i8 %a, %b
   %r = select i1 %c, i8 %a, i8 %b

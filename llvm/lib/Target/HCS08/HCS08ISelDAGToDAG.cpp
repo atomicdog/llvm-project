@@ -42,6 +42,8 @@ private:
   bool SelectIndexedAddr(SDValue Addr, SDValue &Base, SDValue &Disp);
   bool SelectIndexedAddr16(SDValue Addr, SDValue &Base, SDValue &Disp);
   bool SelectIndexedBase(SDValue Addr, SDValue &Base);
+  bool SelectDirectAddr(SDValue Addr, SDValue &Out);
+  bool SelectExtendedAddr(SDValue Addr, SDValue &Out);
 };
 
 class HCS08DAGToDAGISelLegacy : public SelectionDAGISelLegacy {
@@ -154,6 +156,62 @@ bool HCS08DAGToDAGISel::SelectIndexedBase(SDValue Addr, SDValue &Base) {
   if (!isIndexedAddr(Addr))
     return false;
   Base = Addr;
+  return true;
+}
+
+// Which part of $0000-$00FF a program may use is a property of the board, not
+// of the program: the low end is the memory-mapped I/O registers, and how much
+// RAM follows them differs from part to part. So the compiler does not decide
+// what lives there - the user does, by placing a variable in the .page0
+// section, which is the same statement GCC's m68hc11 port spells
+// __attribute__((page0)). The linker script decides whether it fits, and an
+// address that turns out not to be in the page is an R_HCS08_8 overflow at
+// link time rather than a silently truncated access.
+static bool isDirectPageGlobal(const GlobalValue *GV) {
+  if (!GV->hasSection())
+    return false;
+  StringRef Section = GV->getSection();
+  return Section == ".page0" || Section.starts_with(".page0.");
+}
+
+// Match an address the direct-page forms can reach in one byte: an absolute
+// address below $0100, or a global the user has placed in the direct page.
+bool HCS08DAGToDAGISel::SelectDirectAddr(SDValue Addr, SDValue &Out) {
+  if (auto *C = dyn_cast<ConstantSDNode>(Addr)) {
+    if (!isUInt<8>(C->getZExtValue()))
+      return false;
+    Out = CurDAG->getTargetConstant(C->getZExtValue(), SDLoc(Addr), MVT::i8);
+    return true;
+  }
+
+  if (Addr.getOpcode() != HCS08ISD::Wrapper)
+    return false;
+  auto *GA = dyn_cast<GlobalAddressSDNode>(Addr.getOperand(0));
+  if (!GA || !isDirectPageGlobal(GA->getGlobal()))
+    return false;
+
+  // The address is a symbol, so its low byte is left to the relocation. A
+  // displacement folded into it earlier rides along in the operand.
+  Out = Addr.getOperand(0);
+  return true;
+}
+
+// The same for the extended forms, which reach the whole address space: any
+// global, and any absolute address. This is what makes a fixed address - an
+// I/O register, typically - a "sta $nnnn" rather than an address materialized
+// into H:X and dereferenced there, which costs a byte more and the index
+// register besides.
+bool HCS08DAGToDAGISel::SelectExtendedAddr(SDValue Addr, SDValue &Out) {
+  if (auto *C = dyn_cast<ConstantSDNode>(Addr)) {
+    Out = CurDAG->getTargetConstant(C->getZExtValue() & 0xFFFF, SDLoc(Addr),
+                                    MVT::i16);
+    return true;
+  }
+
+  if (Addr.getOpcode() != HCS08ISD::Wrapper ||
+      !isa<GlobalAddressSDNode>(Addr.getOperand(0)))
+    return false;
+  Out = Addr.getOperand(0);
   return true;
 }
 

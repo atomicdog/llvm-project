@@ -36,6 +36,7 @@ public:
 private:
   void printImm8(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printImm16(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+  void printDPMem(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printSPMem(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printIXMem(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printIXMem16(const MCInst *MI, unsigned OpNo, raw_ostream &O);

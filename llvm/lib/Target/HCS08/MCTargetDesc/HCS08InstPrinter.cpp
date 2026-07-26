@@ -59,6 +59,22 @@ void HCS08InstPrinter::printImm16(const MCInst *MI, unsigned OpNo,
   MAI.printExpr(O, *Op.getExpr());
 }
 
+/// Print a direct-page address. A constant needs nothing beyond the byte
+/// itself - an operand that fits in one is what selects the mode. A symbol
+/// does: the assembler cannot know its value, and defaults to the extended
+/// form, so the '<' that forces the direct-page form has to be spelled out.
+void HCS08InstPrinter::printDPMem(const MCInst *MI, unsigned OpNo,
+                                   raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isImm()) {
+    O << format("$%02x", static_cast<uint8_t>(Op.getImm()));
+    return;
+  }
+  assert(Op.isExpr() && "unknown operand kind in printDPMem");
+  O << '<';
+  MAI.printExpr(O, *Op.getExpr());
+}
+
 /// Print an n,sp operand. The operand pair is (base, displacement); the base
 /// is always SP by the time this runs, and it is implicit in the syntax, so
 /// only the displacement is printed.

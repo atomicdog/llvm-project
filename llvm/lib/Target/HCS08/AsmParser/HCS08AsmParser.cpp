@@ -39,16 +39,24 @@ namespace {
 class HCS08Operand : public MCParsedAsmOperand {
   enum KindTy { k_Token, k_Immediate, k_Register } Kind;
 
+public:
+  /// An explicit choice of address width, written as a '<' or '>' prefix.
+  /// Without one the width follows from the value, which leaves a symbol -
+  /// whose value the assembler does not know - always extended.
+  enum WidthTy { w_Auto, w_Direct, w_Extended };
+
+private:
   SMLoc Start, End;
   StringRef Tok;
   const MCExpr *Imm = nullptr;
   MCRegister Reg;
+  WidthTy Width = w_Auto;
 
 public:
   HCS08Operand(StringRef T, SMLoc S)
       : Kind(k_Token), Start(S), End(S), Tok(T) {}
-  HCS08Operand(const MCExpr *E, SMLoc S, SMLoc E2)
-      : Kind(k_Immediate), Start(S), End(E2), Imm(E) {}
+  HCS08Operand(const MCExpr *E, SMLoc S, SMLoc E2, WidthTy W)
+      : Kind(k_Immediate), Start(S), End(E2), Imm(E), Width(W) {}
   HCS08Operand(MCRegister R, SMLoc S, SMLoc E2)
       : Kind(k_Register), Start(S), End(E2), Reg(R) {}
 
@@ -89,21 +97,21 @@ public:
   /// Matches an operand that is known to fit in a byte, which selects the
   /// direct-page and 8-bit-displacement forms.
   bool isUImm8() const {
-    if (Kind != k_Immediate)
+    if (Kind != k_Immediate || Width == w_Extended)
       return false;
     // A byte selector always yields a byte.
     if (isByteSelect())
       return true;
     int64_t Value;
     if (!Imm->evaluateAsAbsolute(Value))
-      return false;
+      return Width == w_Direct;
     return Value >= -128 && Value <= 255;
   }
 
   /// Matches anything representable in a word, including symbols whose value
   /// is not known yet; those always select the extended form.
   bool isUImm16() const {
-    if (Kind != k_Immediate)
+    if (Kind != k_Immediate || Width == w_Direct)
       return false;
     // A byte selector cannot fill a 16-bit field.
     if (isByteSelect())
@@ -147,8 +155,9 @@ public:
   }
 
   static std::unique_ptr<HCS08Operand> createImm(const MCExpr *Val, SMLoc S,
-                                                  SMLoc E) {
-    return std::make_unique<HCS08Operand>(Val, S, E);
+                                                  SMLoc E,
+                                                  WidthTy W = w_Auto) {
+    return std::make_unique<HCS08Operand>(Val, S, E, W);
   }
 
   static std::unique_ptr<HCS08Operand> createReg(MCRegister R, SMLoc S,
@@ -273,10 +282,22 @@ bool HCS08AsmParser::parseOperand(OperandVector &Operands, bool BitNumber) {
     }
   }
 
+  // An address may choose its width explicitly: '<expr' is direct-page and
+  // '>expr' extended, the traditional Freescale spelling. Without it a symbol
+  // has to be assumed to be anywhere, so this is the only way to ask for the
+  // direct-page form of an address the assembler cannot evaluate - which is
+  // what the compiler emits for a variable it has placed in the page.
+  HCS08Operand::WidthTy Width = HCS08Operand::w_Auto;
+  if (parseOptionalToken(AsmToken::Less))
+    Width = HCS08Operand::w_Direct;
+  else if (parseOptionalToken(AsmToken::Greater))
+    Width = HCS08Operand::w_Extended;
+
   const MCExpr *Val;
   if (getParser().parseExpression(Val))
     return Error(S, "expected operand");
-  Operands.push_back(HCS08Operand::createImm(Val, S, getLexer().getLoc()));
+  Operands.push_back(
+      HCS08Operand::createImm(Val, S, getLexer().getLoc(), Width));
   return false;
 }
 

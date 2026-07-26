@@ -97,7 +97,7 @@ def UImm8AsmOperand : AsmOperandClass {
   let DiagnosticString = "operand must be an 8-bit value";
 }
 
-// 8-bit immediate, direct-page address, or 8-bit index/stack displacement.
+// 8-bit immediate, or an 8-bit index/stack displacement.
 def imm8 : Operand<i8> {
   let ParserMatchClass = UImm8AsmOperand;
   let PrintMethod = "printImm8";
@@ -109,6 +109,19 @@ def imm16 : Operand<i16> {
   let ParserMatchClass = UImm16AsmOperand;
   let PrintMethod = "printImm16";
   let EncoderMethod = "getImm16OpValue";
+}
+
+// A direct-page address. It is an address, so it is i16-typed like every other
+// one here - imm8 is an i8 and cannot hold one - but only the low byte is
+// printed and encoded, which is the whole point of the mode. Printing it is
+// not quite printing a byte: a symbol needs the '<' that forces this form,
+// since the assembler cannot evaluate it and would otherwise choose the
+// extended one. That is why displacements and immediates keep imm8, where a
+// '<' would mean something else or nothing at all.
+def dpmem : Operand<i16> {
+  let ParserMatchClass = UImm8AsmOperand;
+  let PrintMethod = "printDPMem";
+  let EncoderMethod = "getImm8OpValue";
 }
 
 // PC-relative branch displacements. The displacement is measured from the end
@@ -153,8 +166,8 @@ def ixmem16 : Operand<i16> {
 
 // The address shapes, kept disjoint so that exactly one matches: a frame
 // object (n,sp), or a pointer with a byte displacement (n,x), a wider one
-// (nn,x), or none (,x). A global goes through HCS08Wrapper and the extended
-// forms instead, which reach it without tying up H:X.
+// (nn,x), or none (,x). A global or a fixed address goes through the absolute
+// forms below instead, which reach it without tying up H:X.
 //
 // ixaddr stops one short of the byte range: a 16-bit access at displacement N
 // also writes N+1, and keeping that in range everywhere is worth more than the
@@ -163,6 +176,14 @@ def stackaddr : ComplexPattern<i16, 2, "SelectStackAddr", [], []>;
 def ixaddr : ComplexPattern<i16, 2, "SelectIndexedAddr", [], [], 10>;
 def ixaddr16 : ComplexPattern<i16, 2, "SelectIndexedAddr16", [], [], 5>;
 def ixbase : ComplexPattern<i16, 1, "SelectIndexedBase", [], []>;
+
+// The two absolute shapes. Every operand they take is one byte shorter in the
+// direct-page form, so dpaddr outranks extaddr and both outrank the indexed
+// forms, which need the address in H:X first. dpaddr matches only what is
+// known at compile time to be below $0100: a fixed address, or a global the
+// user has placed in the direct page (see SelectDirectAddr).
+def dpaddr : ComplexPattern<i16, 1, "SelectDirectAddr", [], [], 20>;
+def extaddr : ComplexPattern<i16, 1, "SelectExtendedAddr", [], [], 15>;
 
 //===----------------------------------------------------------------------===//
 // Load / store / arithmetic: the regular 8-addressing-mode matrix.
@@ -175,7 +196,7 @@ def ixbase : ComplexPattern<i16, 1, "SelectIndexedBase", [], []>;
 
 // Modes shared by every operation in the matrix.
 multiclass ALUCommon<bits<4> col, string m> {
-  def _dir : F16<{0b1011, col}, AddrModeDir, (outs), (ins imm8:$b0),
+  def _dir : F16<{0b1011, col}, AddrModeDir, (outs), (ins dpmem:$b0),
                  m # "\t$b0">;
   def _ext : F24<{0b1100, col}, AddrModeExt, (outs), (ins imm16:$w0),
                  m # "\t$w0">;
@@ -239,7 +260,7 @@ def AIX : F16<0xAF, AddrModeImm, (outs), (ins imm8:$b0), "aix\t#$b0">;
 //===----------------------------------------------------------------------===//
 
 multiclass RMW<bits<4> col, string m> {
-  def _dir : F16<{0b0011, col}, AddrModeDir, (outs), (ins imm8:$b0),
+  def _dir : F16<{0b0011, col}, AddrModeDir, (outs), (ins dpmem:$b0),
                  m # "\t$b0">;
   def A    : F8 <{0b0100, col}, AddrModeInh, (outs), (ins), m # "a">;
   def X    : F8 <{0b0101, col}, AddrModeInh, (outs), (ins), m # "x">;
@@ -275,8 +296,8 @@ def : MnemonicAlias<"aslx", "lslx">;
 //===----------------------------------------------------------------------===//
 
 let isBranch = 1, isTerminator = 1 in {
-def CBEQ_dir  : F24B<0x31, AddrModeDirRel, (outs), (ins imm8:$b0, brtarget3:$b1),
-                     "cbeq\t$b0,$b1">;
+def CBEQ_dir  : F24B<0x31, AddrModeDirRel, (outs),
+                     (ins dpmem:$b0, brtarget3:$b1), "cbeq\t$b0,$b1">;
 def CBEQA_imm : F24B<0x41, AddrModeDirRel, (outs), (ins imm8:$b0, brtarget3:$b1),
                      "cbeqa\t#$b0,$b1">;
 def CBEQX_imm : F24B<0x51, AddrModeDirRel, (outs), (ins imm8:$b0, brtarget3:$b1),
@@ -288,8 +309,8 @@ def CBEQ_ixp  : F16 <0x71, AddrModeRel, (outs), (ins brtarget2:$b0),
 def CBEQ_sp1  : F32PB<0x61, AddrModeSp1, (outs), (ins imm8:$b0, brtarget4:$b1),
                       "cbeq\t$b0,sp,$b1">;
 
-def DBNZ_dir  : F24B<0x3B, AddrModeDirRel, (outs), (ins imm8:$b0, brtarget3:$b1),
-                     "dbnz\t$b0,$b1">;
+def DBNZ_dir  : F24B<0x3B, AddrModeDirRel, (outs),
+                     (ins dpmem:$b0, brtarget3:$b1), "dbnz\t$b0,$b1">;
 def DBNZA     : F16 <0x4B, AddrModeRel, (outs), (ins brtarget2:$b0),
                      "dbnza\t$b0">;
 def DBNZX     : F16 <0x5B, AddrModeRel, (outs), (ins brtarget2:$b0),
@@ -309,9 +330,9 @@ def DBNZ_sp1  : F32PB<0x6B, AddrModeSp1, (outs), (ins imm8:$b0, brtarget4:$b1),
 // bset n,$dd / bclr n,$dd occupy 0x10-0x1F, with the bit number in opcode bits
 // 3-1 and set/clear in bit 0.
 foreach i = 0-7 in {
-  def BSET#i : F16<!add(0x10, !mul(i, 2)), AddrModeDir, (outs), (ins imm8:$b0),
+  def BSET#i : F16<!add(0x10, !mul(i, 2)), AddrModeDir, (outs), (ins dpmem:$b0),
                    "bset\t" # i # ",$b0">;
-  def BCLR#i : F16<!add(0x11, !mul(i, 2)), AddrModeDir, (outs), (ins imm8:$b0),
+  def BCLR#i : F16<!add(0x11, !mul(i, 2)), AddrModeDir, (outs), (ins dpmem:$b0),
                    "bclr\t" # i # ",$b0">;
 }
 
@@ -319,10 +340,10 @@ foreach i = 0-7 in {
 let isBranch = 1, isTerminator = 1 in
 foreach i = 0-7 in {
   def BRSET#i : F24B<!add(0x00, !mul(i, 2)), AddrModeDirRel, (outs),
-                     (ins imm8:$b0, brtarget3:$b1),
+                     (ins dpmem:$b0, brtarget3:$b1),
                      "brset\t" # i # ",$b0,$b1">;
   def BRCLR#i : F24B<!add(0x01, !mul(i, 2)), AddrModeDirRel, (outs),
-                     (ins imm8:$b0, brtarget3:$b1),
+                     (ins dpmem:$b0, brtarget3:$b1),
                      "brclr\t" # i # ",$b0,$b1">;
 }
 
@@ -374,19 +395,19 @@ def BSR : F16<0xAD, AddrModeRel, (outs), (ins brtarget2:$b0), "bsr\t$b0">;
 //===----------------------------------------------------------------------===//
 
 def LDHX_imm : F24 <0x45, AddrModeImm, (outs), (ins imm16:$w0), "ldhx\t#$w0">;
-def LDHX_dir : F16 <0x55, AddrModeDir, (outs), (ins imm8:$b0), "ldhx\t$b0">;
+def LDHX_dir : F16 <0x55, AddrModeDir, (outs), (ins dpmem:$b0), "ldhx\t$b0">;
 def LDHX_ext : F24 <0x32, AddrModeExt, (outs), (ins imm16:$w0), "ldhx\t$w0">;
 def LDHX_ix  : F16P<0xAE, AddrModeIx, (outs), (ins), "ldhx\t,x">;
 def LDHX_ix2 : F32P<0xBE, AddrModeIx2, (outs), (ins imm16:$w0), "ldhx\t$w0,x">;
 def LDHX_ix1 : F24P<0xCE, AddrModeIx1, (outs), (ins imm8:$b0), "ldhx\t$b0,x">;
 def LDHX_sp1 : F24P<0xFE, AddrModeSp1, (outs), (ins imm8:$b0), "ldhx\t$b0,sp">;
 
-def STHX_dir : F16 <0x35, AddrModeDir, (outs), (ins imm8:$b0), "sthx\t$b0">;
+def STHX_dir : F16 <0x35, AddrModeDir, (outs), (ins dpmem:$b0), "sthx\t$b0">;
 def STHX_ext : F24 <0x96, AddrModeExt, (outs), (ins imm16:$w0), "sthx\t$w0">;
 def STHX_sp1 : F24P<0xFF, AddrModeSp1, (outs), (ins imm8:$b0), "sthx\t$b0,sp">;
 
 def CPHX_imm : F24 <0x65, AddrModeImm, (outs), (ins imm16:$w0), "cphx\t#$w0">;
-def CPHX_dir : F16 <0x75, AddrModeDir, (outs), (ins imm8:$b0), "cphx\t$b0">;
+def CPHX_dir : F16 <0x75, AddrModeDir, (outs), (ins dpmem:$b0), "cphx\t$b0">;
 def CPHX_ext : F24 <0x3E, AddrModeExt, (outs), (ins imm16:$w0), "cphx\t$w0">;
 def CPHX_sp1 : F24P<0xF3, AddrModeSp1, (outs), (ins imm8:$b0), "cphx\t$b0,sp">;
 
@@ -394,12 +415,12 @@ def CPHX_sp1 : F24P<0xF3, AddrModeSp1, (outs), (ins imm8:$b0), "cphx\t$b0,sp">;
 // Memory-to-memory move (HCS08).
 //===----------------------------------------------------------------------===//
 
-def MOV_dd   : F24B<0x4E, AddrModeDd, (outs), (ins imm8:$b0, imm8:$b1),
+def MOV_dd   : F24B<0x4E, AddrModeDd, (outs), (ins dpmem:$b0, dpmem:$b1),
                     "mov\t$b0,$b1">;
-def MOV_dix  : F16 <0x5E, AddrModeDir, (outs), (ins imm8:$b0), "mov\t$b0,x+">;
-def MOV_imd  : F24B<0x6E, AddrModeImd, (outs), (ins imm8:$b0, imm8:$b1),
+def MOV_dix  : F16 <0x5E, AddrModeDir, (outs), (ins dpmem:$b0), "mov\t$b0,x+">;
+def MOV_imd  : F24B<0x6E, AddrModeImd, (outs), (ins imm8:$b0, dpmem:$b1),
                     "mov\t#$b0,$b1">;
-def MOV_ixd  : F16 <0x7E, AddrModeDir, (outs), (ins imm8:$b0), "mov\t,x+,$b0">;
+def MOV_ixd  : F16 <0x7E, AddrModeDir, (outs), (ins dpmem:$b0), "mov\t,x+,$b0">;
 
 //===----------------------------------------------------------------------===//
 // Inherent instructions
@@ -462,23 +483,31 @@ let isCodeGenOnly = 1, hasSideEffects = 0, Defs = [NZV] in {
                   "ldhx\t#$w0", [(set GR16:$dst, imm:$w0)]>;
 }
 
-// Extended (16-bit absolute) loads and stores, used for globals. The address
-// is a 16-bit operand; for a symbol it becomes an R_HCS08_16 relocation.
+// Absolute loads and stores: globals, and addresses fixed at compile time.
+// The extended forms take a 16-bit operand and reach anywhere; the direct
+// forms take one byte and reach the direct page. For a symbol the operand
+// becomes an R_HCS08_16 or an R_HCS08_8 relocation, and it is the second of
+// those that makes the linker check that the variable really did land in the
+// page the code was compiled to assume.
 let isCodeGenOnly = 1, Defs = [NZV] in {
+  def LDAdir : F16<0xB6, AddrModeDir, (outs GR8:$dst), (ins dpmem:$b0),
+                   "lda\t$b0", [(set GR8:$dst, (load dpaddr:$b0))]>;
   def LDAext : F24<0xC6, AddrModeExt, (outs GR8:$dst), (ins imm16:$w0),
-                   "lda\t$w0",
-                   [(set GR8:$dst, (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+                   "lda\t$w0", [(set GR8:$dst, (load extaddr:$w0))]>;
+  def LDHXdir : F16<0x55, AddrModeDir, (outs GR16:$dst), (ins dpmem:$b0),
+                    "ldhx\t$b0", [(set GR16:$dst, (load dpaddr:$b0))]>;
   def LDHXext : F24<0x32, AddrModeExt, (outs GR16:$dst), (ins imm16:$w0),
-                    "ldhx\t$w0",
-                    [(set GR16:$dst, (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+                    "ldhx\t$w0", [(set GR16:$dst, (load extaddr:$w0))]>;
 
   let mayStore = 1 in {
+    def STAdir : F16<0xB7, AddrModeDir, (outs), (ins GR8:$src, dpmem:$b0),
+                     "sta\t$b0", [(store GR8:$src, dpaddr:$b0)]>;
     def STAext : F24<0xC7, AddrModeExt, (outs), (ins GR8:$src, imm16:$w0),
-                     "sta\t$w0",
-                     [(store GR8:$src, (HCS08Wrapper tglobaladdr:$w0))]>;
+                     "sta\t$w0", [(store GR8:$src, extaddr:$w0)]>;
+    def STHXdir : F16<0x35, AddrModeDir, (outs), (ins GR16:$src, dpmem:$b0),
+                      "sthx\t$b0", [(store GR16:$src, dpaddr:$b0)]>;
     def STHXext : F24<0x96, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
-                      "sthx\t$w0",
-                      [(store GR16:$src, (HCS08Wrapper tglobaladdr:$w0))]>;
+                      "sthx\t$w0", [(store GR16:$src, extaddr:$w0)]>;
   }
 }
 
@@ -566,11 +595,12 @@ multiclass ALU8<bits<4> col, string m, SDNode op, list<Register> flags> {
     def i : F16<{0b1010, col}, AddrModeImm, (outs GR8:$dst),
                 (ins GR8:$src, imm8:$b0), m # "\t#$b0",
                 [(set GR8:$dst, (op GR8:$src, imm:$b0))]>;
+    def dir : F16<{0b1011, col}, AddrModeDir, (outs GR8:$dst),
+                  (ins GR8:$src, dpmem:$b0), m # "\t$b0",
+                  [(set GR8:$dst, (op GR8:$src, (load dpaddr:$b0)))]>;
     def ext : F24<{0b1100, col}, AddrModeExt, (outs GR8:$dst),
                   (ins GR8:$src, imm16:$w0), m # "\t$w0",
-                  [(set GR8:$dst,
-                        (op GR8:$src,
-                            (load (HCS08Wrapper tglobaladdr:$w0))))]>;
+                  [(set GR8:$dst, (op GR8:$src, (load extaddr:$w0)))]>;
     // Indexed forms: the second operand is read through a pointer in H:X.
     let mayLoad = 1 in {
       def ix2 : F24<{0b1101, col}, AddrModeIx2, (outs GR8:$dst),
@@ -860,10 +890,10 @@ let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [NZV, C],
 let Defs = [NZV, C], isCodeGenOnly = 1, hasSideEffects = 0 in {
   def CMP8i : F16<0xA1, AddrModeImm, (outs), (ins GR8:$src, imm8:$b0),
                   "cmp\t#$b0", [(HCS08cmp GR8:$src, imm:$b0)]>;
+  def CMP8dir : F16<0xB1, AddrModeDir, (outs), (ins GR8:$src, dpmem:$b0),
+                    "cmp\t$b0", [(HCS08cmp GR8:$src, (load dpaddr:$b0))]>;
   def CMP8ext : F24<0xC1, AddrModeExt, (outs), (ins GR8:$src, imm16:$w0),
-                    "cmp\t$w0",
-                    [(HCS08cmp GR8:$src,
-                               (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+                    "cmp\t$w0", [(HCS08cmp GR8:$src, (load extaddr:$w0))]>;
   let mayLoad = 1 in {
     def CMP8sp : F24P<0xE1, AddrModeSp1, (outs), (ins GR8:$src, spmem:$b0),
                       "cmp\t$b0", [(HCS08cmp GR8:$src, (load stackaddr:$b0))]>;
@@ -888,10 +918,10 @@ let Defs = [NZV, C], isCodeGenOnly = 1, hasSideEffects = 0 in {
 let Defs = [NZV, C], isCodeGenOnly = 1, hasSideEffects = 0 in {
   def CMP16i : F24<0x65, AddrModeImm, (outs), (ins GR16:$src, imm16:$w0),
                    "cphx\t#$w0", [(HCS08cmp GR16:$src, imm:$w0)]>;
+  def CMP16dir : F16<0x75, AddrModeDir, (outs), (ins GR16:$src, dpmem:$b0),
+                     "cphx\t$b0", [(HCS08cmp GR16:$src, (load dpaddr:$b0))]>;
   def CMP16ext : F24<0x3E, AddrModeExt, (outs), (ins GR16:$src, imm16:$w0),
-                     "cphx\t$w0",
-                     [(HCS08cmp GR16:$src,
-                                (load (HCS08Wrapper tglobaladdr:$w0)))]>;
+                     "cphx\t$w0", [(HCS08cmp GR16:$src, (load extaddr:$w0))]>;
   let mayLoad = 1 in
   def CMP16sp : F24P<0xF3, AddrModeSp1, (outs), (ins GR16:$src, spmem:$b0),
                      "cphx\t$b0", [(HCS08cmp GR16:$src, (load stackaddr:$b0))]>;

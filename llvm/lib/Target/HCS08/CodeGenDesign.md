@@ -282,6 +282,45 @@ same shape.
 With the operands explicit, the allocator puts the reload *before* the fused
 instruction, which is where it belonged.
 
+## 15. The direct page is the user's to spend
+
+Every absolute operand is a byte shorter in the direct-page form, but which
+part of `$0000`-`$00FF` a program may use is a property of the board rather
+than of the program: the low end is the memory-mapped I/O registers, and how
+much RAM follows them differs from part to part. On an MC9S08QY there are 31
+registers in page zero and usable RAM starts at `$0060`, leaving about 160
+bytes - contended with whatever the user wanted fast. That is a link-time,
+part-specific budget, and it is why the compiler does not decide what lives
+there. Two addresses are known below `$0100` at compile time, and they are the
+only two the direct-page forms are used for:
+
+- **A fixed address.** `*(volatile uint8_t *)0x00C0` is `sta $c0` rather than
+  `ldhx #$00c0` / `sta ,x`, which is two bytes more and costs the index
+  register. (Above the page it is `sta $nnnn`, still a byte better than going
+  through H:X.)
+- **A variable the user has placed there**, by putting it in the `.page0`
+  section - the statement GCC's m68hc11 port spells `__attribute__((page0))`
+  and CodeWarrior spells `__SHORT_SEG`. The linker script decides whether it
+  fits, and a `.page0` that lands above `$00FF` is an `R_HCS08_8` overflow at
+  link time rather than a silently truncated address.
+
+This is deliberately the same division SDCC and CodeWarrior arrived at, and it
+does not prejudge §2: it costs the register allocator nothing and leaves the
+page just as available to a future imaginary register file.
+
+`SelectDirectAddr` / `SelectExtendedAddr` are the two `ComplexPattern`s, and
+every operation that had an extended form has a direct one beside it: `lda`,
+`sta`, `ldhx`, `sthx`, the 8-bit ALU column, `cmp` and `cphx`.
+
+One wrinkle in the assembly syntax. A symbol's value is unknown to the
+assembler, so an unadorned one has to be assumed to be anywhere and selects the
+extended form - which would quietly undo all of this on the way through a `.s`
+file. `<expr` forces the direct-page form and `>expr` the extended one, the
+traditional Freescale spelling, and the compiler emits the `<`. That is what
+`dpmem` prints and `imm8` does not: a `<` before an immediate already means
+something else (`#<expr` is the low byte), and before an `n,sp` displacement it
+would mean nothing at all.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly, treating Model B

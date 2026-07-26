@@ -61,6 +61,21 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
   }
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
+  // There is no instruction that widens a value already sitting in a register,
+  // so widening one is a shift pair. A boolean widened to a mask is the common
+  // case and reaches this from ordinary C.
+  for (MVT VT : {MVT::i1, MVT::i8})
+    setOperationAction(ISD::SIGN_EXTEND_INREG, VT, Expand);
+
+  // None of the bit-counting or bit-permuting operations exist here. Ordinary
+  // C reaches them through __builtin_clz and friends, and compiler-rt's own
+  // division routines are written in terms of them.
+  for (MVT VT : {MVT::i8, MVT::i16}) {
+    for (auto Op : {ISD::CTLZ, ISD::CTTZ, ISD::CTPOP, ISD::BSWAP,
+                    ISD::BITREVERSE, ISD::ROTL, ISD::ROTR})
+      setOperationAction(Op, VT, Expand);
+  }
+
   setTargetDAGCombine(ISD::ADD);
 
   // The hardware multiply and divide are byte-wide and unsigned, so everything

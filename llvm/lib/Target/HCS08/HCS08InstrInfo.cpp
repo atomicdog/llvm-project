@@ -308,15 +308,26 @@ bool HCS08InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
 
 unsigned HCS08InstrInfo::removeBranch(MachineBasicBlock &MBB,
                                       int *BytesRemoved) const {
-  assert(!BytesRemoved && "code size not handled");
-  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+  if (BytesRemoved)
+    *BytesRemoved = 0;
+
+  // Walk back from the end rather than from the last instruction, so that a
+  // block whose only instruction is a branch still has it removed. Stopping
+  // one short of that leaves the caller believing it removed nothing, and
+  // branch folding then has no way to make progress and does not terminate.
+  MachineBasicBlock::iterator I = MBB.end();
   unsigned Count = 0;
   while (I != MBB.begin()) {
-    if (I->getOpcode() != HCS08::BRAcc && !HCS08InstrInfo::isCondBranchOpcode(I->getOpcode()))
-      break;
-    MachineBasicBlock::iterator ToDelete = I;
     --I;
-    ToDelete->eraseFromParent();
+    if (I->isDebugInstr())
+      continue;
+    if (I->getOpcode() != HCS08::BRAcc &&
+        !HCS08InstrInfo::isCondBranchOpcode(I->getOpcode()))
+      break;
+    if (BytesRemoved)
+      *BytesRemoved += getInstSizeInBytes(*I);
+    I->eraseFromParent();
+    I = MBB.end();
     ++Count;
   }
   return Count;
@@ -328,17 +339,25 @@ unsigned HCS08InstrInfo::insertBranch(MachineBasicBlock &MBB,
                                       ArrayRef<MachineOperand> Cond,
                                       const DebugLoc &DL,
                                       int *BytesAdded) const {
-  assert(!BytesAdded && "code size not handled");
+  if (BytesAdded)
+    *BytesAdded = 0;
+
+  auto Emit = [&](unsigned Opc, MachineBasicBlock *Dest) {
+    MachineInstr &MI = *BuildMI(&MBB, DL, get(Opc)).addMBB(Dest);
+    if (BytesAdded)
+      *BytesAdded += getInstSizeInBytes(MI);
+  };
+
   if (Cond.empty()) {
     assert(!FBB && "unconditional branch with two targets");
-    BuildMI(&MBB, DL, get(HCS08::BRAcc)).addMBB(TBB);
+    Emit(HCS08::BRAcc, TBB);
     return 1;
   }
 
-  BuildMI(&MBB, DL, get(Cond[0].getImm())).addMBB(TBB);
+  Emit(Cond[0].getImm(), TBB);
   if (!FBB)
     return 1;
-  BuildMI(&MBB, DL, get(HCS08::BRAcc)).addMBB(FBB);
+  Emit(HCS08::BRAcc, FBB);
   return 2;
 }
 

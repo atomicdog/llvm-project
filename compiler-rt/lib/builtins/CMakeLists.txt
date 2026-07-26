@@ -871,6 +871,11 @@ set(avr_SOURCES
 # divide is 16/8, so the 16-bit forms are written here; anything wider comes
 # from the generic sources, except the ones that only a target with a 16-bit
 # int needs and that compiler-rt therefore does not have.
+#
+# The generic sources are listed one by one rather than taken wholesale. Most
+# of that set is soft float and complex arithmetic, which this target has no
+# support for and which exhausts its one accumulator during register
+# allocation. Adding a routine here means it has been compiled for hcs08.
 set(hcs08_SOURCES
   hcs08/mulhi3.S
   hcs08/udivmodhi4.S
@@ -880,7 +885,12 @@ set(hcs08_SOURCES
   hcs08/modqi3.c
   hcs08/mulsi3.c
   hcs08/shiftsi3.c
-  ${GENERIC_SOURCES}
+  divmodsi4.c
+  divsi3.c
+  modsi3.c
+  udivmodsi4.c
+  udivsi3.c
+  umodsi3.c
 )
 
 # hexagon arch

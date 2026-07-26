@@ -9,6 +9,7 @@
 #include "HCS08InstrInfo.h"
 #include "HCS08.h"
 #include "HCS08Subtarget.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -83,6 +84,48 @@ void HCS08InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   // missing transfers but are off by one - tsx gives SP+1 and txs takes H:X-1 -
   // so a copy lowered to either of them would be wrong by a byte.
   report_fatal_error("cannot copy between these HCS08 registers");
+}
+
+/// The whole-slot frame access these opcodes perform, or nothing.
+///
+/// Both halves of the contract matter. The displacement has to be zero and the
+/// width has to be the whole object, because the 16-bit chains reach into a
+/// slot a byte at a time and reporting one of those as "the value is in this
+/// slot" would have the spiller delete an access that only moves half of it.
+static Register matchSlotAccess(const MachineInstr &MI, int &FrameIndex,
+                                unsigned Bytes, unsigned RegOp,
+                                unsigned BaseOp) {
+  if (!MI.getOperand(BaseOp).isFI() || MI.getOperand(BaseOp + 1).getImm() != 0)
+    return Register();
+  int FI = MI.getOperand(BaseOp).getIndex();
+  if (MI.getMF()->getFrameInfo().getObjectSize(FI) != Bytes)
+    return Register();
+  FrameIndex = FI;
+  return MI.getOperand(RegOp).getReg();
+}
+
+Register HCS08InstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+                                             int &FrameIndex) const {
+  switch (MI.getOpcode()) {
+  case HCS08::LDAsp:
+    return matchSlotAccess(MI, FrameIndex, 1, /*RegOp=*/0, /*BaseOp=*/1);
+  case HCS08::LDHXsp:
+    return matchSlotAccess(MI, FrameIndex, 2, /*RegOp=*/0, /*BaseOp=*/1);
+  default:
+    return Register();
+  }
+}
+
+Register HCS08InstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+                                            int &FrameIndex) const {
+  switch (MI.getOpcode()) {
+  case HCS08::STAsp:
+    return matchSlotAccess(MI, FrameIndex, 1, /*RegOp=*/0, /*BaseOp=*/1);
+  case HCS08::STHXsp:
+    return matchSlotAccess(MI, FrameIndex, 2, /*RegOp=*/0, /*BaseOp=*/1);
+  default:
+    return Register();
+  }
 }
 
 void HCS08InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,

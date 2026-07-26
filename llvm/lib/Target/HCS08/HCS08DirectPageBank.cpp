@@ -38,6 +38,7 @@
 
 #include "HCS08.h"
 #include "HCS08InstrInfo.h"
+#include "HCS08MachineFunctionInfo.h"
 #include "HCS08Subtarget.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -60,8 +61,7 @@ static cl::opt<unsigned> BankSize(
     "hcs08-dp-bank-size", cl::Hidden, cl::init(0),
     cl::desc("Bytes of direct page to spend on the spill bank (0 disables)"));
 
-/// The linker script defines this; the compiler only ever refers to it.
-static const char BankSymbol[] = "__hcs08_dp_bank";
+unsigned llvm::getHCS08DPBankSize() { return BankSize; }
 
 namespace {
 
@@ -266,17 +266,18 @@ bool HCS08DirectPageBank::runOnMachineFunction(MachineFunction &MF) {
   });
 
   bool Changed = false;
-  unsigned Used = 0;
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
 
   for (const Candidate &C : Candidates) {
-    if (Used + C.Size > BankSize)
+    // Instruction selection has already taken what it needed for the parked
+    // operands of the 16-bit expansions, so this picks up after it.
+    int Offset = FuncInfo->allocDPBank(C.Size);
+    if (Offset < 0)
       continue;
-    unsigned Offset = Used;
-    Used += C.Size;
 
     for (const Ref &R : C.Refs) {
       MachineInstr *MI = R.MI;
-      MachineOperand Slot = MachineOperand::CreateES(BankSymbol);
+      MachineOperand Slot = MachineOperand::CreateES(HCS08DPBankSymbol);
       Slot.setOffset(Offset + R.Byte);
 
       // Operand 0 is the value in both directions - the destination of a load,

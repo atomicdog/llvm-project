@@ -149,6 +149,15 @@ def spmem : Operand<i16> {
   let EncoderMethod = "getMemDispOpValue";
 }
 
+// A scratch slot for the pseudos that park an operand: the same (base,
+// displacement) shape as spmem, but the base may be DPB instead of SP, meaning
+// the displacement is a byte offset into the direct-page bank. Only pseudos
+// use it, and they are gone before anything prints or encodes an operand,
+// which is why it needs neither method.
+def slotmem : Operand<i16> {
+  let MIOperandInfo = (ops SLOTBASE, imm8);
+}
+
 // The n,x addressing modes, likewise: H:X as the base plus a displacement,
 // one byte wide or two. The base really is a register here, so unlike spmem it
 // survives register allocation as one.
@@ -649,6 +658,13 @@ let isCodeGenOnly = 1, Constraints = "$src = $dst", hasSideEffects = 0,
                     (ins GR8:$src, spmem:$b0), "adc\t$b0", []>;
   def SBC8sp : F24P<0xE2, AddrModeSp1, (outs GR8:$dst),
                     (ins GR8:$src, spmem:$b0), "sbc\t$b0", []>;
+  // The same for an operand parked in the direct-page bank. The rest of the
+  // 8-bit column gets its direct form from the ALU8 multiclass; these two are
+  // written out because they carry the Uses = [C] that the chain depends on.
+  def ADC8dir : F16<0xB9, AddrModeDir, (outs GR8:$dst),
+                    (ins GR8:$src, dpmem:$b0), "adc\t$b0", []>;
+  def SBC8dir : F16<0xB2, AddrModeDir, (outs GR8:$dst),
+                    (ins GR8:$src, dpmem:$b0), "sbc\t$b0", []>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -707,11 +723,13 @@ def AND16rm : ALU16rm<and>;
 def ORA16rm : ALU16rm<or>;
 def EOR16rm : ALU16rm<xor>;
 
-// The parked form: both operands are frame slots by now. The result is built
-// in the first of them and loaded into H:X. Seven three-byte instructions.
+// The parked form: both operands are parked by now, in the frame or in the
+// direct-page bank. The result is built in the first of them and loaded into
+// H:X - seven instructions, three bytes each from the frame and two from the
+// bank, which is what makes the first operand worth putting there.
 class ALU16mem
-    : HCS08Inst<21, AddrModeNone, (outs GR16:$dst), (ins spmem:$a, spmem:$b),
-                "", []> {
+    : HCS08Inst<21, AddrModeNone, (outs GR16:$dst),
+                (ins slotmem:$a, slotmem:$b), "", []> {
   let isPseudo = 1;
   let isCodeGenOnly = 1;
   let Defs = [A, NZV, C];

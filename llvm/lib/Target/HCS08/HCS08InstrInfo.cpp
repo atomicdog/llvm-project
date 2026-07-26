@@ -223,10 +223,12 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     return false;
   }
 
-  // Both operands are frame slots that prologue/epilogue insertion has already
-  // resolved to SP-relative displacements. This runs after everything that
-  // could have inserted an instruction into the middle of the chain, which is
-  // the point: the carry has to survive from the low byte to the high one.
+  // Each operand is either a frame slot, which prologue/epilogue insertion has
+  // already resolved to an SP-relative displacement, or a byte offset into the
+  // direct-page bank, which the base names DPB to say. This runs after
+  // everything that could have inserted an instruction into the middle of the
+  // chain, which is the point: the carry has to survive from the low byte to
+  // the high one.
   MachineBasicBlock &MBB = *MI.getParent();
   DebugLoc DL = MI.getDebugLoc();
   Register Dst = MI.getOperand(0).getReg();
@@ -235,25 +237,58 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   Register BaseB = MI.getOperand(3).getReg();
   int64_t DispB = MI.getOperand(4).getImm();
 
-  assert(isUInt<8>(DispA + 1) && isUInt<8>(DispB + 1) &&
+  bool ABank = BaseA == HCS08::DPB, BBank = BaseB == HCS08::DPB;
+  assert((ABank || isUInt<8>(DispA + 1)) && (BBank || isUInt<8>(DispB + 1)) &&
          "HCS08 scratch word out of SP-relative range");
+
+  // A bank slot is two bytes to reach against the frame's three, and the
+  // instruction is a different one rather than the same one shortened. This
+  // yields the opcode rather than the descriptor: a MachineInstr keeps a
+  // pointer to the MCInstrDesc it was built from, so handing it one that dies
+  // with the enclosing expression leaves it dangling.
+  auto Access = [](unsigned SPOpc, unsigned DirOpc, bool InBank) -> unsigned {
+    return InBank ? DirOpc : SPOpc;
+  };
+  auto AddAddr = [&](const MachineInstrBuilder &MIB, Register Base,
+                     int64_t Disp) {
+    if (Base != HCS08::DPB) {
+      MIB.addReg(Base).addImm(Disp);
+      return;
+    }
+    MachineOperand MO = MachineOperand::CreateES(HCS08DPBankSymbol);
+    MO.setOffset(Disp);
+    MIB.add(MO);
+  };
+
+  unsigned LoDir = LoOpc == HCS08::ADD8sp   ? unsigned(HCS08::ADD8dir)
+                   : LoOpc == HCS08::SUB8sp ? unsigned(HCS08::SUB8dir)
+                   : LoOpc == HCS08::AND8sp ? unsigned(HCS08::AND8dir)
+                   : LoOpc == HCS08::ORA8sp ? unsigned(HCS08::ORA8dir)
+                                            : unsigned(HCS08::EOR8dir);
+  unsigned HiDir = HiOpc == HCS08::ADC8sp   ? unsigned(HCS08::ADC8dir)
+                   : HiOpc == HCS08::SBC8sp ? unsigned(HCS08::SBC8dir)
+                                            : LoDir;
 
   // The result is built in the first slot, low byte first, then loaded into
   // H:X. Big-endian, so the low byte is the higher address.
   for (int Byte = 1; Byte >= 0; --Byte) {
-    BuildMI(MBB, MI, DL, get(HCS08::LDAsp), HCS08::A)
-        .addReg(BaseA)
-        .addImm(DispA + Byte);
-    BuildMI(MBB, MI, DL, get(Byte == 1 ? LoOpc : HiOpc), HCS08::A)
-        .addReg(HCS08::A)
-        .addReg(BaseB)
-        .addImm(DispB + Byte);
-    BuildMI(MBB, MI, DL, get(HCS08::STAsp))
-        .addReg(HCS08::A)
-        .addReg(BaseA)
-        .addImm(DispA + Byte);
+    AddAddr(BuildMI(MBB, MI, DL,
+                    get(Access(HCS08::LDAsp, HCS08::LDAdir, ABank)), HCS08::A),
+            BaseA, DispA + Byte);
+    AddAddr(BuildMI(MBB, MI, DL,
+                    get(Access(Byte == 1 ? LoOpc : HiOpc,
+                               Byte == 1 ? LoDir : HiDir, BBank)),
+                    HCS08::A)
+                .addReg(HCS08::A),
+            BaseB, DispB + Byte);
+    AddAddr(BuildMI(MBB, MI, DL,
+                    get(Access(HCS08::STAsp, HCS08::STAdir, ABank)))
+                .addReg(HCS08::A),
+            BaseA, DispA + Byte);
   }
-  BuildMI(MBB, MI, DL, get(HCS08::LDHXsp), Dst).addReg(BaseA).addImm(DispA);
+  AddAddr(BuildMI(MBB, MI, DL,
+                  get(Access(HCS08::LDHXsp, HCS08::LDHXdir, ABank)), Dst),
+          BaseA, DispA);
 
   MI.eraseFromParent();
   return true;

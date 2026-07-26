@@ -40,6 +40,14 @@ class PassRegistry;
 FunctionPass *createHCS08ISelDag(HCS08TargetMachine &TM,
                                  CodeGenOptLevel OptLevel);
 
+/// The direct-page spill bank. The compiler refers to this symbol and never
+/// defines it: how much of $0000-$00FF a program may spend is a property of the
+/// board, so the linker script places it. See CodeGenDesign.md section 17.
+inline constexpr char HCS08DPBankSymbol[] = "__hcs08_dp_bank";
+
+/// Bytes of direct page the bank may use, 0 if it is switched off.
+unsigned getHCS08DPBankSize();
+
 /// Holds a conditional branch together with the instruction that set the flags
 /// it reads, so that register allocation cannot insert a reload between them.
 FunctionPass *createHCS08FuseCompareBranchPass();

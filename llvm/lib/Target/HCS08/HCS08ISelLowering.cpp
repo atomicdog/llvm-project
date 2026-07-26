@@ -158,18 +158,68 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
   }
 }
 
-/// Get (creating on first use) one of the function's two scratch words.
-static int getWord16Temp(MachineFunction &MF, bool Second) {
-  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
-  int FI = Second ? FuncInfo->getWord16Temp2FI() : FuncInfo->getWord16TempFI();
-  if (FI == -1) {
-    FI = MF.getFrameInfo().CreateSpillStackObject(2, Align(1));
-    if (Second)
-      FuncInfo->setWord16Temp2FI(FI);
-    else
-      FuncInfo->setWord16TempFI(FI);
+/// Get (creating on first use) one of the function's scratch slots.
+///
+/// The direct-page bank is preferred and a frame object is the fallback. Every
+/// use is a byte cheaper there, and a function whose frame held nothing else
+/// loses its prologue and epilogue with it. The bank is safe for these without
+/// any of the analysis HCS08DirectPageBank has to do, because each expansion
+/// below fills its slot and consumes it within itself: no two uses are ever
+/// live at once, and nothing in one outlives a call, since there is no call in
+/// any of them.
+static const HCS08Scratch &getScratch(MachineFunction &MF, HCS08Scratch &S,
+                                      unsigned Bytes) {
+  if (!S.isValid()) {
+    S.Bank = MF.getInfo<HCS08MachineFunctionInfo>()->allocDPBank(Bytes);
+    if (!S.inBank())
+      S.FI = MF.getFrameInfo().CreateSpillStackObject(Bytes, Align(1));
   }
-  return FI;
+  return S;
+}
+
+/// The direct-page counterpart of a frame-slot access, if the slot is in the
+/// bank; the access itself if it is not.
+static unsigned slotOpcode(unsigned SPOpc, const HCS08Scratch &S) {
+  if (!S.inBank())
+    return SPOpc;
+  switch (SPOpc) {
+  case HCS08::STHXsp:  return HCS08::STHXdir;
+  case HCS08::LDHXsp:  return HCS08::LDHXdir;
+  case HCS08::STAsp:   return HCS08::STAdir;
+  case HCS08::LDAsp:   return HCS08::LDAdir;
+  case HCS08::CMP8sp:  return HCS08::CMP8dir;
+  case HCS08::CMP16sp: return HCS08::CMP16dir;
+  case HCS08::ADD8sp:  return HCS08::ADD8dir;
+  case HCS08::SUB8sp:  return HCS08::SUB8dir;
+  case HCS08::AND8sp:  return HCS08::AND8dir;
+  case HCS08::ORA8sp:  return HCS08::ORA8dir;
+  case HCS08::EOR8sp:  return HCS08::EOR8dir;
+  }
+  llvm_unreachable("no direct-page form of this frame access");
+}
+
+/// Append the address of one byte of a scratch slot to a real instruction.
+static void addSlotAddr(const MachineInstrBuilder &MIB, const HCS08Scratch &S,
+                        int64_t Byte) {
+  if (!S.inBank()) {
+    MIB.addFrameIndex(S.FI).addImm(Byte);
+    return;
+  }
+  MachineOperand MO = MachineOperand::CreateES(HCS08DPBankSymbol);
+  MO.setOffset(S.Bank + Byte);
+  MIB.add(MO);
+}
+
+/// Append a scratch slot as the (base, displacement) pair of a slotmem operand.
+/// The 16-bit chains are expanded long after a frame index would have said
+/// where the slot is, so the base names DPB when it is in the bank and carries
+/// the frame index when it is not.
+static void addSlotOperand(const MachineInstrBuilder &MIB,
+                           const HCS08Scratch &S) {
+  if (S.inBank())
+    MIB.addReg(HCS08::DPB).addImm(S.Bank);
+  else
+    MIB.addFrameIndex(S.FI).addImm(0);
 }
 
 // Store a 16-bit value through a pointer, a byte at a time.
@@ -192,21 +242,20 @@ static MachineBasicBlock *emitStore16Indexed(MachineInstr &MI,
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   DebugLoc DL = MI.getDebugLoc();
 
-  int FI = getWord16Temp(MF, /*Second=*/false);
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  const HCS08Scratch &S = getScratch(MF, FuncInfo->getWord16Temp(), 2);
 
   Register Base = MI.getOperand(1).getReg();
   bool BaseIsKill = MI.getOperand(1).isKill();
   int64_t Disp = MI.getOperand(2).getImm();
-  BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
-      .add(MI.getOperand(0)) // the value; dead after this, freeing H:X
-      .addFrameIndex(FI)
-      .addImm(0);
+  addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(HCS08::STHXsp, S)))
+                  .add(MI.getOperand(0)), // the value; dead here, freeing H:X
+              S, 0);
 
   for (unsigned Byte = 0; Byte != 2; ++Byte) {
     Register Tmp = MRI.createVirtualRegister(&HCS08::GR8RegClass);
-    BuildMI(*MBB, MI, DL, TII.get(HCS08::LDAsp), Tmp)
-        .addFrameIndex(FI)
-        .addImm(Byte);
+    unsigned LdOpc = slotOpcode(HCS08::LDAsp, S);
+    addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(LdOpc), Tmp), S, Byte);
     // The pointer stays live until the last byte is written - but only dies
     // there if it was dying here at all. A 32-bit store is two of these
     // through the same pointer, and killing it on the first one leaves the
@@ -241,29 +290,27 @@ static MachineBasicBlock *emitALU16(MachineInstr &MI, MachineBasicBlock *MBB,
   // The result is built in the first operand's slot, so that one is always a
   // scratch word of ours - the second may be any frame object, since the chain
   // only reads it.
-  int FIa = getWord16Temp(MF, /*Second=*/false);
-  BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
-      .add(MI.getOperand(1))
-      .addFrameIndex(FIa)
-      .addImm(0);
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  const HCS08Scratch &A = getScratch(MF, FuncInfo->getWord16Temp(), 2);
+  addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(HCS08::STHXsp, A)))
+                  .add(MI.getOperand(1)),
+              A, 0);
 
-  int FIb = -1;
+  const HCS08Scratch *B = nullptr;
   if (!SecondInMemory) {
-    FIb = getWord16Temp(MF, /*Second=*/true);
-    BuildMI(*MBB, MI, DL, TII.get(HCS08::STHXsp))
-        .add(MI.getOperand(2))
-        .addFrameIndex(FIb)
-        .addImm(0);
+    B = &getScratch(MF, FuncInfo->getWord16Temp2(), 2);
+    addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(HCS08::STHXsp, *B)))
+                    .add(MI.getOperand(2)),
+                *B, 0);
   }
 
   auto Chain = BuildMI(*MBB, MI, DL, TII.get(MemOpc))
-                   .add(MI.getOperand(0)) // destination, H:X
-                   .addFrameIndex(FIa)
-                   .addImm(0);
+                   .add(MI.getOperand(0)); // destination, H:X
+  addSlotOperand(Chain, A);
   if (SecondInMemory)
     Chain.add(MI.getOperand(2)).add(MI.getOperand(3));
   else
-    Chain.addFrameIndex(FIb).addImm(0);
+    addSlotOperand(Chain, *B);
 
   MI.eraseFromParent();
   return MBB;
@@ -280,26 +327,19 @@ static MachineBasicBlock *emitCmpParked(MachineInstr &MI,
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   DebugLoc DL = MI.getDebugLoc();
 
-  int FI;
-  if (Is16) {
-    FI = getWord16Temp(MF, /*Second=*/true);
-  } else {
-    auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
-    FI = FuncInfo->getALUTempFI();
-    if (FI == -1) {
-      FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
-      FuncInfo->setALUTempFI(FI);
-    }
-  }
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  const HCS08Scratch &S =
+      Is16 ? getScratch(MF, FuncInfo->getWord16Temp2(), 2)
+           : getScratch(MF, FuncInfo->getALUTemp(), 1);
 
-  BuildMI(*MBB, MI, DL, TII.get(Is16 ? HCS08::STHXsp : HCS08::STAsp))
-      .add(MI.getOperand(1))
-      .addFrameIndex(FI)
-      .addImm(0);
-  BuildMI(*MBB, MI, DL, TII.get(Is16 ? HCS08::CMP16sp : HCS08::CMP8sp))
-      .add(MI.getOperand(0))
-      .addFrameIndex(FI)
-      .addImm(0);
+  unsigned ParkOpc = Is16 ? HCS08::STHXsp : HCS08::STAsp;
+  unsigned CmpOpc = Is16 ? HCS08::CMP16sp : HCS08::CMP8sp;
+  addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(ParkOpc, S)))
+                  .add(MI.getOperand(1)),
+              S, 0);
+  addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(CmpOpc, S)))
+                  .add(MI.getOperand(0)),
+              S, 0);
 
   MI.eraseFromParent();
   return MBB;
@@ -348,13 +388,28 @@ static MachineBasicBlock *emitSelect(MachineInstr &MI,
   return SinkMBB;
 }
 
-/// Get (creating on first use) the function's one-byte scratch slot.
+/// Get (creating on first use) the frame-only scratch byte and word.
+///
+/// These two are not bank candidates. The loop below shifts its word in place
+/// with lsl and ror and counts down with tst and dec, the divide reads its byte
+/// with ldx, and the direct-page column has none of those - a bank slot could
+/// be written but not worked on.
 static int getByteTemp(MachineFunction &MF) {
   auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
-  int FI = FuncInfo->getALUTempFI();
+  int FI = FuncInfo->getByteTempFI();
   if (FI == -1) {
     FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
-    FuncInfo->setALUTempFI(FI);
+    FuncInfo->setByteTempFI(FI);
+  }
+  return FI;
+}
+
+static int getShiftWord(MachineFunction &MF) {
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  int FI = FuncInfo->getShiftWordFI();
+  if (FI == -1) {
+    FI = MF.getFrameInfo().CreateSpillStackObject(2, Align(1));
+    FuncInfo->setShiftWordFI(FI);
   }
   return FI;
 }
@@ -495,7 +550,7 @@ static MachineBasicBlock *emitShiftLoop16(MachineInstr &MI,
   LoopMBB->addSuccessor(LoopMBB);
   LoopMBB->addSuccessor(DoneMBB);
 
-  int Val = getWord16Temp(MF, /*Second=*/false);
+  int Val = getShiftWord(MF);
   int Cnt = getByteTemp(MF);
 
   BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STHXsp))
@@ -589,21 +644,15 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   DebugLoc DL = MI.getDebugLoc();
 
   auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
-  int FI = FuncInfo->getALUTempFI();
-  if (FI == -1) {
-    FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
-    FuncInfo->setALUTempFI(FI);
-  }
+  const HCS08Scratch &S = getScratch(MF, FuncInfo->getALUTemp(), 1);
 
-  BuildMI(*MBB, MI, DL, TII.get(HCS08::STAsp))
-      .add(MI.getOperand(2)) // second source
-      .addFrameIndex(FI)
-      .addImm(0);
-  BuildMI(*MBB, MI, DL, TII.get(SpOpc))
-      .add(MI.getOperand(0)) // destination
-      .add(MI.getOperand(1)) // first source, tied to the destination
-      .addFrameIndex(FI)
-      .addImm(0);
+  addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(HCS08::STAsp, S)))
+                  .add(MI.getOperand(2)), // second source
+              S, 0);
+  addSlotAddr(BuildMI(*MBB, MI, DL, TII.get(slotOpcode(SpOpc, S)))
+                  .add(MI.getOperand(0))  // destination
+                  .add(MI.getOperand(1)), // first source, tied to it
+              S, 0);
 
   MI.eraseFromParent();
   return MBB;

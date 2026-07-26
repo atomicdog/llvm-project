@@ -86,3 +86,16 @@ def SPBASE : RegisterClass<"HCS08", [i16], 8, (add SP)> {
   let CopyCost = -1;
   let isAllocatable = 0;
 }
+
+// Not a register at all: a marker saying that the operand beside it is a byte
+// offset into the direct-page bank rather than a displacement from SP. The
+// 16-bit ALU pseudos take their operands from either place, and since they are
+// expanded long after the difference stops being visible in a frame index,
+// something on the instruction has to remember which. Naming it in the base
+// operand keeps the (base, displacement) pair one shape.
+def DPB : HCS08Reg<8, "dpb">;
+
+def SLOTBASE : RegisterClass<"HCS08", [i16], 8, (add SP, DPB)> {
+  let CopyCost = -1;
+  let isAllocatable = 0;
+}

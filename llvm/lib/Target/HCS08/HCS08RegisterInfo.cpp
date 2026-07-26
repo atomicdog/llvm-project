@@ -33,6 +33,9 @@ BitVector HCS08RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(HCS08::PC);
   Reserved.set(HCS08::NZV);
   Reserved.set(HCS08::C);
+  // Not a register, only a marker distinguishing a bank offset from a frame
+  // displacement in a pseudo's base operand.
+  Reserved.set(HCS08::DPB);
   return Reserved;
 }
 

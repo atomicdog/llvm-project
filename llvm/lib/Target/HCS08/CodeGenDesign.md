@@ -462,29 +462,36 @@ of a byte the bank was never given means the value arrived from somewhere the
 bank does not reach, and the whole slot stays in the frame. Promoting only the
 accesses that pair up would leave one value split between two places.
 
-**The win is much smaller than §16's, and for a reason §17 half-stated.**
-Over 155 compiler-rt sources the bank saves 829 bytes of `.text`, 0.50%: 45
-sources smaller, 110 unchanged, none larger. Four bytes of bank is worth as
-much as sixteen. That is because §16 already recovers the byte on exactly the
-accesses the bank would otherwise recover it on - a promoted `lda` saves one
-byte, and so did the `n,x` form it would have had - so promoting a run also
-*shortens* it, and the `tsx` that was amortised over six accesses is now
-amortised over two. What is left is the genuine part: `sthx`/`ldhx`, which §16
-cannot touch at all, at two bytes per park. §17 predicted six bytes to four on
-the round trip and that is precisely what arrives.
+**Promotion on its own is worth almost nothing, and the reason is §16.** The
+pass alone saves 829 bytes of `.text` over 155 compiler-rt sources, 0.50%. §16
+already recovers the byte on exactly the accesses the bank would recover it on
+- a promoted `lda` saves one byte, and so did the `n,x` form it would have had
+- so promoting a run also *shortens* it, and the `tsx` that was amortised over
+six accesses is now amortised over two. What is left is `sthx`/`ldhx`, which
+§16 cannot touch at all, at two bytes per park: §17 predicted six bytes to four
+on the round trip and that is exactly and only what arrives.
 
-**The frame object is not reclaimed, and that is the biggest thing left.**
-Running after `expandPostRAPseudo` means running after `PrologEpilogInserter`,
-so the slot has already been allocated and the `ais` pair that allocates it
-stays. A function whose frame exists *only* for promoted slots therefore keeps
-a prologue and epilogue it no longer needs: `add16` goes from 24 bytes to 22
-where an unreclaimed 4 bytes of `ais` would have taken it to 18. The fix is not
-to move this pass earlier - before expansion the slot is still hidden inside
-`ADD16m` - but to hand the ALU16 and indexed-store helpers a bank slot at
-instruction-selection time instead of calling `CreateSpillStackObject`. Those
-temporaries are safe by construction, since each one is parked and collected
-inside a single expansion that contains no call, so they need none of the
-analysis above. That is worth more than this pass gets and it is the next step.
+**Asking for the slot instead of promoting it is worth ten times as much.**
+The temporaries the 16-bit expansions park their operands in are created at
+instruction selection, by `CreateSpillStackObject`; taking them from the bank
+there instead means no frame object is ever made, and a function whose frame
+held nothing else loses its prologue and epilogue with it. `add16` goes 24
+bytes to 18, where promotion afterwards could only reach 22 - the `ais` pair
+had already been emitted by then. Over the same 155 sources: **12688 bytes,
+7.63%**, 78 sources smaller and none larger. Four bytes of bank gets 7.59% of
+that, because the first scratch word is where nearly all of it is.
+
+These slots need none of the analysis above. Each expansion fills its slot and
+consumes it within itself, so no two uses are ever live at once and none
+outlives a call - there is no call in any of them. What decides whether one can
+move is instead which instructions read it: the direct-page column has no
+`lsl`, `ror`, `asr`, `tst`, `dec` or `ldx`, so the variable-shift loop and the
+divide keep frame slots of their own. `adc` and `sbc` needed direct forms added
+to reach the parked operand of a carry chain.
+
+The two allocators have to agree, since a function can use both: the count of
+bank bytes handed out lives in `HCS08MachineFunctionInfo`, instruction
+selection takes what it needs first and the pass picks up after it.
 
 **One hazard to write down before interrupts exist.** The bank is one object
 shared by the whole program, which is sound only because nothing in it is live

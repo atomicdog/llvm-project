@@ -99,6 +99,17 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
       setOperationAction(Op, VT, Expand);
   }
 
+  // Varargs. The va_list is a plain pointer, so va_arg is the generic
+  // expansion - load the pointer, load the value, store the pointer past it -
+  // and va_copy is a pointer copy. Nothing is aligned to more than a byte on
+  // this target, so none of that has any padding to step over. Only va_start
+  // needs the target to say anything, and what it says is where the unnamed
+  // arguments begin.
+  setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  setOperationAction(ISD::VAARG, MVT::Other, Expand);
+  setOperationAction(ISD::VACOPY, MVT::Other, Expand);
+  setOperationAction(ISD::VAEND, MVT::Other, Expand);
+
   // The ALU shifts one bit at a time. A byte shifted by a constant is that
   // many single-bit shifts; everything else goes to the runtime, which is
   // where a loop belongs - see LowerShift. i16 is custom rather than LibCall
@@ -158,6 +169,8 @@ SDValue HCS08TargetLowering::LowerOperation(SDValue Op,
   case ISD::SRL:
   case ISD::SRA:
     return LowerShift(Op, DAG);
+  case ISD::VASTART:
+    return LowerVASTART(Op, DAG);
   default:
     llvm_unreachable("unimplemented operation lowering");
   }
@@ -653,16 +666,13 @@ SDValue HCS08TargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &dl,
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
-  if (isVarArg)
-    report_fatal_error("HCS08 varargs not yet implemented");
-
   MachineFunction &MF = DAG.getMachineFunction();
   MachineRegisterInfo &RegInfo = MF.getRegInfo();
   MachineFrameInfo &MFI = MF.getFrameInfo();
 
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
-  CCInfo.AnalyzeFormalArguments(Ins, CC_HCS08);
+  CCInfo.AnalyzeFormalArguments(Ins, isVarArg ? CC_HCS08_VarArg : CC_HCS08);
 
   for (CCValAssign &VA : ArgLocs) {
     MVT LocVT = VA.getLocVT();
@@ -693,7 +703,32 @@ SDValue HCS08TargetLowering::LowerFormalArguments(
 
     InVals.push_back(Val);
   }
+
+  // The unnamed arguments begin at the first byte past the named ones, and
+  // since a variadic function passes everything on the stack that is simply
+  // where the incoming area has got to. va_start writes the address of this
+  // object; nothing ever reads it as a value, so a one-byte object is enough
+  // to name the place.
+  if (isVarArg) {
+    auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+    FuncInfo->setVarArgsFrameIndex(MFI.CreateFixedObject(
+        1, CCInfo.getStackSize() + 2, /*IsImmutable=*/true));
+  }
   return Chain;
+}
+
+// va_start: put the address of the first unnamed argument in the va_list,
+// which on this target is a plain pointer and nothing more.
+SDValue HCS08TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
+  SDLoc dl(Op);
+
+  SDValue Addr =
+      DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(), MVT::i16);
+  const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
+  return DAG.getStore(Op.getOperand(0), dl, Addr, Op.getOperand(1),
+                      MachinePointerInfo(SV));
 }
 
 SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
@@ -709,13 +744,10 @@ SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   bool isVarArg = CLI.IsVarArg;
   CLI.IsTailCall = false;
 
-  if (isVarArg)
-    report_fatal_error("HCS08 varargs not yet implemented");
-
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(), ArgLocs,
                  *DAG.getContext());
-  CCInfo.AnalyzeCallOperands(Outs, CC_HCS08);
+  CCInfo.AnalyzeCallOperands(Outs, isVarArg ? CC_HCS08_VarArg : CC_HCS08);
 
   // A call to anything but a symbol cannot be a jsr: jsr ,x wants the target
   // in H:X, which is also where the first 16-bit argument goes, and the

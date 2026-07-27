@@ -60,6 +60,11 @@ class HCS08MachineFunctionInfo : public MachineFunctionInfo {
   /// and a slot each is what keeps them from landing on top of one another.
   unsigned DPBankUsed = 0;
 
+  /// Where the unnamed arguments of a variadic function start: a fixed object
+  /// at the first byte past the named ones, whose address is what va_start
+  /// writes into the va_list. -1 in a function that is not variadic.
+  int VarArgsFrameIndex = -1;
+
 public:
   HCS08MachineFunctionInfo() = default;
   HCS08MachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI) {}
@@ -71,6 +76,9 @@ public:
 
   int getByteTempFI() const { return ByteTempFI; }
   void setByteTempFI(int FI) { ByteTempFI = FI; }
+
+  int getVarArgsFrameIndex() const { return VarArgsFrameIndex; }
+  void setVarArgsFrameIndex(int FI) { VarArgsFrameIndex = FI; }
 
   unsigned getDPBankUsed() const { return DPBankUsed; }
 

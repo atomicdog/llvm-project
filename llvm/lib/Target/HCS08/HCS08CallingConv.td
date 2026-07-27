@@ -28,5 +28,22 @@ def CC_HCS08 : CallingConv<[
   CCIfType<[i16], CCAssignToStack<2, 1>>
 ]>;
 
+// A variadic function passes everything on the stack, named arguments
+// included. va_arg walks the unnamed ones, so they have to be contiguous in
+// memory and in the order they were written, which a register cannot be part
+// of; and the alternative - named arguments in registers, unnamed ones on the
+// stack - would have the two ends disagree about A whenever the first unnamed
+// argument is byte-sized and no named one claimed it. Both ends know the
+// function is variadic, because C requires the prototype to say so, so both
+// pick this and there is nothing to get wrong.
+//
+// The cost is the fixed arguments of a variadic call, which is one word for
+// the usual "int n, ...".
+def CC_HCS08_VarArg : CallingConv<[
+  CCIfType<[i1], CCPromoteToType<i8>>,
+  CCIfType<[i8],  CCAssignToStack<1, 1>>,
+  CCIfType<[i16], CCAssignToStack<2, 1>>
+]>;
+
 // Nothing is callee-saved yet (A / H:X are caller-saved).
 def CSR_HCS08 : CalleeSavedRegs<(add)>;

@@ -30,4 +30,12 @@ void HCS08TargetInfo::getTargetDefines(const LangOptions &Opts,
   Builder.defineMacro("HCS08");
   Builder.defineMacro("__HCS08__");
   Builder.defineMacro("__hcs08__");
+
+  // There is no floating-point unit and no hard-float ABI to be an
+  // alternative to it, so every float operation is a call into the runtime.
+  // The name is ARM's, but compiler-rt reads it as the general question of
+  // whether the target has hardware floating point: __fixsfdi and
+  // __fixunssfdi convert through double when it is absent, which this target
+  // cannot do at all, and which fails at link time rather than quietly.
+  Builder.defineMacro("__SOFTFP__");
 }

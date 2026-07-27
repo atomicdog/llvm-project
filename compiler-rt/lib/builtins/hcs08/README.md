@@ -47,15 +47,32 @@ than taken wholesale. Most of that set is soft float and complex arithmetic,
 which this target has no support for and which exhausts its one accumulator
 during register allocation.
 
-**64-bit division is missing.** `udivmoddi4.c` exhausts the register
-allocator, and `__udivdi3` and `__umoddi3` are written in terms of it, so
-none of the three is built and a 64-bit divide fails to link. Multiplication
-and the shifts are here and work.
+**64-bit division builds now.** `udivmoddi4.c` used to exhaust the register
+allocator, which took `__udivdi3` and `__umoddi3` with it. That was not
+pressure: it was a missing `isLoadFromStackSlot`/`isStoreToStackSlot` pair, so
+the spiller could not recognise its own spills. With those in place the whole
+set builds with the default allocator.
 
-An earlier version of this file blamed a compile-time explosion for that,
-which was wrong twice over: the explosion was an infinite loop in branch
-folding caused by a bug in `removeBranch`, and it had nothing to do with this
-target's register pressure. With that fixed, `udivmoddi4.c` fails in under a
-second with a diagnosis. The remaining failure is genuinely allocation, and
-is the strongest argument so far for the direct-page register file in
-CodeGenDesign.md.
+Two earlier diagnoses in this file were wrong, in a way worth remembering. A
+compile-time explosion was blamed first; that was an infinite loop in branch
+folding from a bug in `removeBranch`, nothing to do with this target. Then
+register pressure was blamed; that was the spiller hooks. Neither was an
+argument for a direct-page register file, though both were offered as one.
+
+**Single precision is in and double precision is not.** `addsf3`, `subsf3`,
+`mulsf3`, `divsf3`, `comparesf2`, and the conversions both ways are built and
+verified against an independent simulator, 144 cases over arithmetic,
+subnormals, the comparison predicates, conversions and the calling convention.
+`__divdf3` and the rest of the f64 set run past the 256-byte frame ceiling and
+will not compile at any setting, and would not fit a 32KB part regardless:
+`muldf3` alone is 14KB.
+
+That split is why the clang target defines `__SOFTFP__`. `fixsfdi.c` and
+`fixunssfdi.c` each carry two implementations, and the one they choose without
+it converts through `double` - so `(long long)someFloat` pulls in `__muldf3`
+and `__adddf3` and fails to link. With it they use the integer path, which is
+both correct here and a good deal smaller.
+
+`fp_mode.c` is needed too, though nothing calls it directly: `__addsf3` asks
+it for the rounding mode. There is no FPU to ask, so it answers
+round-to-nearest and drops the inexact flag.

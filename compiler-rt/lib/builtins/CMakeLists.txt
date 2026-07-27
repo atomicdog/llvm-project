@@ -872,10 +872,11 @@ set(avr_SOURCES
 # from the generic sources, except the ones that only a target with a 16-bit
 # int needs and that compiler-rt therefore does not have.
 #
-# The generic sources are listed one by one rather than taken wholesale. Most
-# of that set is soft float and complex arithmetic, which this target has no
-# support for and which exhausts its one accumulator during register
-# allocation. Adding a routine here means it has been compiled for hcs08.
+# The generic sources are listed one by one rather than taken wholesale, since
+# what compiles here has moved as the backend has: the double-precision and
+# complex routines still do not fit, because their frames run past the 256-byte
+# ceiling that the "n,sp" displacement imposes. Adding a routine here means it
+# has been compiled for hcs08.
 set(hcs08_SOURCES
   hcs08/mulhi3.S
   hcs08/udivmodhi4.S
@@ -895,6 +896,33 @@ set(hcs08_SOURCES
   ashrdi3.c
   lshrdi3.c
   muldi3.c
+  divdi3.c
+  moddi3.c
+  udivdi3.c
+  umoddi3.c
+  udivmoddi4.c
+  # Single precision. __divdf3 and the rest of the double-precision set are
+  # over the frame ceiling and are deliberately absent; f32 is the widest
+  # float this target has.
+  #
+  # fp_mode.c is the generic one: there is no FPU and no status register to
+  # ask, so it reports round-to-nearest and drops the inexact flag. __addsf3
+  # calls into it and does not link without it.
+  fp_mode.c
+  addsf3.c
+  subsf3.c
+  mulsf3.c
+  divsf3.c
+  negsf2.c
+  comparesf2.c
+  floatsisf.c
+  floatunsisf.c
+  floatdisf.c
+  floatundisf.c
+  fixsfsi.c
+  fixunssfsi.c
+  fixsfdi.c
+  fixunssfdi.c
 )
 
 # hexagon arch

@@ -14,3 +14,9 @@
 
 // Big endian, which is what sthx stores and ldhx loads.
 // CHECK-DAG: #define __BYTE_ORDER__ __ORDER_BIG_ENDIAN__
+
+// No FPU, so every float operation is a call into the runtime. compiler-rt
+// reads this to decide whether it may convert through double: __fixsfdi and
+// __fixunssfdi do exactly that when it is missing, which needs __muldf3 and
+// __adddf3, and no double-precision routine fits this target's frame.
+// CHECK-DAG: #define __SOFTFP__ 1

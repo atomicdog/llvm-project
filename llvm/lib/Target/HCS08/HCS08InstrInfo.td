@@ -70,6 +70,12 @@ def HCS08callseq_end : SDNode<"ISD::CALLSEQ_END", SDT_HCS08CallSeqEnd,
 def SDT_HCS08OutArg : SDTypeProfile<1, 1, [SDTCisVT<0, i16>, SDTCisVT<1, i8>]>;
 def HCS08outarg : SDNode<"HCS08ISD::OutArgAddr", SDT_HCS08OutArg>;
 
+// The address an indirect call returns to, as a value, so that it can be
+// stored into the call frame for the rts to find. Its operand is the MCSymbol
+// of the label the asm printer puts after that rts.
+def SDT_HCS08RetAddr : SDTypeProfile<1, 1, [SDTCisVT<0, i16>, SDTCisVT<1, i16>]>;
+def HCS08retaddr : SDNode<"HCS08ISD::RetAddr", SDT_HCS08RetAddr>;
+
 // Pseudo-instruction base (no encoding).
 class HCS08Pseudo<dag outs, dag ins, list<dag> pattern>
     : HCS08Inst<0, AddrModeNone, outs, ins, "", pattern> {
@@ -1135,3 +1141,29 @@ def JSRe : F24<0xCD, AddrModeExt, (outs), (ins imm16:$w0), "jsr\t$w0", []>;
 
 def : Pat<(HCS08call (i16 tglobaladdr:$dst)), (JSRe tglobaladdr:$dst)>;
 def : Pat<(HCS08call (i16 texternalsym:$dst)), (JSRe texternalsym:$dst)>;
+
+// Calling a value rather than a symbol. There is a jsr ,x, but it wants the
+// target in H:X and H:X is where the first 16-bit argument goes, so the two
+// collide on the one pointer register this machine has - and the argument
+// cannot go anywhere else, because the callee is what decides where to read
+// it. Nothing can be left in a register at the point of the jump.
+//
+// So the jump is an rts, which reads its destination from the stack and needs
+// no register at all. LowerCall lays out four bytes at the bottom of the
+// outgoing arguments, target first and return address above it, so that
+//
+//   rts   pops the target into PC and leaves the return address on top,
+//         exactly as a jsr would have
+//
+// and the stack arguments, shifted up by those four bytes, land where the
+// callee expects them. The stores happen before the argument registers are
+// loaded, which is what makes the collision go away, and SP never moves, which
+// is what keeps every other offset in the call sequence correct.
+//
+// The operand is the label the callee returns to; the asm printer emits it
+// immediately after the rts. Both this and the RetAddr node that materialises
+// the same label are selected by hand in HCS08ISelDAGToDAG, because the
+// operand is an MCSymbol and there is no target-constant form of one to write
+// a pattern against.
+let isCall = 1, isCodeGenOnly = 1, isPseudo = 1, Defs = [A, HX, NZV, C] in
+def CALLind : HCS08Inst<1, AddrModeInh, (outs), (ins i16imm:$ret), "", []>;

@@ -240,6 +240,50 @@ void HCS08DAGToDAGISel::Select(SDNode *Node) {
     return;
   }
 
+  // The two halves of an indirect call, both selected here rather than by a
+  // pattern because their operand is an MCSymbol and TableGen has no
+  // target-constant form of one to match against. See LowerCall for the shape
+  // of the thing and HCS08InstrInfo.td for why it is an rts.
+  //
+  // RetAddr materialises the label into H:X so that the store LowerCall built
+  // around it has something to write.
+  if (Node->getOpcode() == HCS08ISD::RetAddr) {
+    CurDAG->SelectNodeTo(Node, HCS08::LDHXi, MVT::i16, Node->getOperand(0));
+    return;
+  }
+
+  // The symbol operand of both of those is a value in its own right, and
+  // nothing selects it - it is carried through to the machine operand as it
+  // stands, the way a target constant is. Say so, or the scheduler trips over
+  // a node it never saw selected.
+  if (Node->getOpcode() == ISD::MCSymbol) {
+    Node->setNodeId(-1);
+    return;
+  }
+
+  // And the call itself, when its "callee" is that same label: the real target
+  // was written to the call frame and the rts will find it there.
+  if (Node->getOpcode() == HCS08ISD::CALL &&
+      Node->getOperand(1).getOpcode() == ISD::MCSymbol) {
+    unsigned NumOps = Node->getNumOperands();
+    SDValue Chain = Node->getOperand(0);
+    SDValue Glue;
+    if (Node->getOperand(NumOps - 1).getValueType() == MVT::Glue)
+      Glue = Node->getOperand(--NumOps);
+
+    // The label, then the registers the call reads, and then the chain and the
+    // glue in that order, which is where SelectNodeTo expects to find them.
+    SmallVector<SDValue, 6> Ops;
+    for (unsigned i = 1; i != NumOps; ++i)
+      Ops.push_back(Node->getOperand(i));
+    Ops.push_back(Chain);
+    if (Glue.getNode())
+      Ops.push_back(Glue);
+
+    CurDAG->SelectNodeTo(Node, HCS08::CALLind, Node->getVTList(), Ops);
+    return;
+  }
+
   // Unconditional branch. Operands: chain, dest.
   if (Node->getOpcode() == ISD::BR) {
     SDValue Chain = Node->getOperand(0);

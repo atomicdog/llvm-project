@@ -64,6 +64,11 @@ void HCS08MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
     case MachineOperand::MO_ExternalSymbol:
       MCOp = LowerSymbolOperand(MO, GetExternalSymbolSymbol(MO));
       break;
+    // The label an indirect call comes back to, which is a temporary symbol
+    // the call lowering made rather than anything with a name of its own.
+    case MachineOperand::MO_MCSymbol:
+      MCOp = LowerSymbolOperand(MO, MO.getMCSymbol());
+      break;
     case MachineOperand::MO_RegisterMask:
       continue;
     }

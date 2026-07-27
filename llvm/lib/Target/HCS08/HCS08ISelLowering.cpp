@@ -15,6 +15,7 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -715,9 +716,35 @@ SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(), ArgLocs,
                  *DAG.getContext());
   CCInfo.AnalyzeCallOperands(Outs, CC_HCS08);
-  unsigned NumBytes = CCInfo.getStackSize();
+
+  // A call to anything but a symbol cannot be a jsr: jsr ,x wants the target
+  // in H:X, which is also where the first 16-bit argument goes, and the
+  // argument cannot be put anywhere else because the callee is what decides
+  // where to read it. The jump is therefore an rts, which takes its
+  // destination off the stack and needs no register.
+  //
+  // That costs four bytes at the bottom of the outgoing arguments:
+  //
+  //   sp+1, sp+2   the target, which rts pops into PC
+  //   sp+3, sp+4   the address to come back to, left on top for the callee
+  //   sp+5 ...     the stack arguments, shifted up out of the way
+  //
+  // which is the same picture a jsr leaves behind, so the callee cannot tell.
+  // Both stores happen below, before any argument register is written, and SP
+  // does not move at any point - between them that is what keeps the target
+  // and the first argument from wanting H:X at the same moment.
+  bool IsIndirect =
+      !isa<GlobalAddressSDNode>(Callee) && !isa<ExternalSymbolSDNode>(Callee);
+  unsigned IndirectBytes = IsIndirect ? HCS08IndirectCallBlockSize : 0;
+  unsigned NumBytes = CCInfo.getStackSize() + IndirectBytes;
 
   Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
+
+  // The label the callee returns to. The asm printer emits it straight after
+  // the rts, and CALLind carries it there.
+  MCSymbol *RetSym = nullptr;
+  if (IsIndirect)
+    RetSym = DAG.getMachineFunction().getContext().createTempSymbol();
 
   SmallVector<std::pair<unsigned, SDValue>, 4> RegsToPass;
   SmallVector<SDValue, 4> MemOpChains;
@@ -752,13 +779,28 @@ SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     // Building the address as a target node keeps SP out of the allocator's
     // way - it is a reserved register, and H:X is too scarce to spend on a
     // frame base.
-    SDValue Addr =
-        DAG.getNode(HCS08ISD::OutArgAddr, dl, MVT::i16,
-                    DAG.getTargetConstant(VA.getLocMemOffset() + 1, dl, MVT::i8));
+    unsigned Off = VA.getLocMemOffset() + IndirectBytes;
+    SDValue Addr = DAG.getNode(HCS08ISD::OutArgAddr, dl, MVT::i16,
+                               DAG.getTargetConstant(Off + 1, dl, MVT::i8));
     MemOpChains.push_back(DAG.getStore(
         Chain, dl, Arg, Addr,
-        MachinePointerInfo::getStack(DAG.getMachineFunction(),
-                                     VA.getLocMemOffset())));
+        MachinePointerInfo::getStack(DAG.getMachineFunction(), Off)));
+  }
+
+  // The two words the rts reads, written here so that they are in place before
+  // the argument registers are, which is the whole point of doing it this way.
+  if (IsIndirect) {
+    auto StoreWord = [&](SDValue V, unsigned Off) {
+      SDValue Addr = DAG.getNode(HCS08ISD::OutArgAddr, dl, MVT::i16,
+                                 DAG.getTargetConstant(Off + 1, dl, MVT::i8));
+      MemOpChains.push_back(DAG.getStore(
+          Chain, dl, V, Addr,
+          MachinePointerInfo::getStack(DAG.getMachineFunction(), Off)));
+    };
+    StoreWord(Callee, 0);
+    StoreWord(DAG.getNode(HCS08ISD::RetAddr, dl, MVT::i16,
+                          DAG.getMCSymbol(RetSym, MVT::i16)),
+              2);
   }
 
   if (!MemOpChains.empty())
@@ -774,6 +816,10 @@ SDValue HCS08TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     Callee = DAG.getTargetGlobalAddress(G->getGlobal(), dl, MVT::i16);
   else if (auto *E = dyn_cast<ExternalSymbolSDNode>(Callee))
     Callee = DAG.getTargetExternalSymbol(E->getSymbol(), MVT::i16);
+  else
+    // The target is on the stack now; what the call still has to carry is the
+    // label to come back to.
+    Callee = DAG.getMCSymbol(RetSym, MVT::i16);
 
   SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
   SmallVector<SDValue, 8> Ops;

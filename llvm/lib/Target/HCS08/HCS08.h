@@ -40,6 +40,11 @@ class PassRegistry;
 FunctionPass *createHCS08ISelDag(HCS08TargetMachine &TM,
                                  CodeGenOptLevel OptLevel);
 
+/// Bytes an indirect call reserves at the bottom of its outgoing arguments:
+/// the target it jumps to with an rts, and the address to come back to. See
+/// LowerCall for the layout and HCS08InstrInfo.td for why it is an rts.
+inline constexpr int HCS08IndirectCallBlockSize = 4;
+
 /// The direct-page spill bank. The compiler refers to this symbol and never
 /// defines it: how much of $0000-$00FF a program may spend is a property of the
 /// board, so the linker script places it. See CodeGenDesign.md section 17.

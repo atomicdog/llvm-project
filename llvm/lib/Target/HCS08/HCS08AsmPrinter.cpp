@@ -72,6 +72,30 @@ bool HCS08AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
 }
 
 void HCS08AsmPrinter::emitInstruction(const MachineInstr *MI) {
+  // An indirect call is an rts that jumps to a target the call sequence has
+  // already written onto the stack, with the address to come back to sitting
+  // above it - see LowerCall. That address is a label, and this is where it
+  // gets emitted: immediately after the rts, so that the return lands on the
+  // instruction that would have followed a jsr.
+  if (MI->getOpcode() == HCS08::CALLind) {
+    MCInst Rts;
+    Rts.setOpcode(HCS08::RTS);
+    EmitToStreamer(*OutStreamer, Rts);
+    OutStreamer->emitLabel(MI->getOperand(0).getMCSymbol());
+
+    // Put the four bytes back. A jsr and the matching rts leave the stack
+    // where they found it because the caller pushed what the callee pops;
+    // here nobody pushed anything, and two rts instructions run - this one
+    // taking the target and the callee's taking the return address - so the
+    // pair consumes the whole block. ais does not touch the condition codes
+    // or either register, so it cannot disturb the value just returned.
+    MCInst Ais;
+    Ais.setOpcode(HCS08::AISi);
+    Ais.addOperand(MCOperand::createImm(-HCS08IndirectCallBlockSize));
+    EmitToStreamer(*OutStreamer, Ais);
+    return;
+  }
+
   // A pseudo that reaches here has no encoding and an empty asm string, so it
   // would print as a blank line and silently drop whatever it stood for. This
   // target leans on pseudos that later passes expand, so refuse loudly rather

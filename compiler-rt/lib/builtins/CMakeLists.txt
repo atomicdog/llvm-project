@@ -880,6 +880,7 @@ set(avr_SOURCES
 set(hcs08_SOURCES
   hcs08/mulhi3.S
   hcs08/udivmodhi4.S
+  hcs08/shifthi3.S
   hcs08/divhi3.c
   hcs08/modhi3.c
   hcs08/divqi3.c

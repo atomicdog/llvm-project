@@ -840,11 +840,15 @@ let isCodeGenOnly = 1, hasSideEffects = 0 in {
 }
 
 //===----------------------------------------------------------------------===//
-// Shifting by a variable amount.
+// The stack-relative read-modify-write forms.
 //
-// The accumulator shifts one bit at a time, so a variable count is a loop.
-// The count is parked in a frame byte and counted down there, which keeps the
-// accumulator free to hold the value being shifted.
+// A shift by a variable amount is a loop whichever way it is written, and it
+// is written in the runtime library rather than here - see LowerShift, and
+// shifthi3.S, which is a loop over exactly these. What keeps them in the
+// backend is that the passes which shorten and relocate stack accesses have to
+// know them: StackToIndexed rewrites each to its ,x form and DirectPageBank
+// refuses to promote a slot that any of them touches, since the direct-page
+// column has no read-modify-write at all.
 //===----------------------------------------------------------------------===//
 
 let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1, Defs = [NZV] in {
@@ -853,24 +857,6 @@ let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1, Defs = [NZV] in {
   def DECsp : F24P<0x6A, AddrModeSp1, (outs), (ins spmem:$b0), "dec\t$b0", []>;
 }
 
-class ShiftV<SDNode op>
-    : HCS08Inst<0, AddrModeNone, (outs GR8:$dst), (ins GR8:$src, GR8:$cnt), "",
-                [(set GR8:$dst, (op GR8:$src, GR8:$cnt))]> {
-  let isPseudo = 1;
-  let isCodeGenOnly = 1;
-  let usesCustomInserter = 1;
-  let Defs = [NZV, C];
-  let hasSideEffects = 0;
-}
-
-def SHL8v : ShiftV<shl>;
-def SRL8v : ShiftV<srl>;
-def SRA8v : ShiftV<sra>;
-
-// A 16-bit shift has no instruction at all, but it does not need the
-// accumulator either: the read-modify-write forms shift a byte in place, and a
-// rotate carries between the two halves. So the value stays in a frame word
-// and the loop touches no register.
 let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
   let Defs = [NZV, C] in {
     def LSLsp : F24P<0x68, AddrModeSp1, (outs), (ins spmem:$b0), "lsl\t$b0", []>;
@@ -883,20 +869,6 @@ let isCodeGenOnly = 1, hasSideEffects = 0, mayLoad = 1, mayStore = 1 in {
     def RORsp : F24P<0x66, AddrModeSp1, (outs), (ins spmem:$b0), "ror\t$b0", []>;
   }
 }
-
-class ShiftV16<SDNode op>
-    : HCS08Inst<0, AddrModeNone, (outs GR16:$dst), (ins GR16:$src, GR8:$cnt),
-                "", [(set GR16:$dst, (op GR16:$src, GR8:$cnt))]> {
-  let isPseudo = 1;
-  let isCodeGenOnly = 1;
-  let usesCustomInserter = 1;
-  let Defs = [NZV, C];
-  let hasSideEffects = 0;
-}
-
-def SHL16v : ShiftV16<shl>;
-def SRL16v : ShiftV16<srl>;
-def SRA16v : ShiftV16<sra>;
 
 // Negate the accumulator.
 let Constraints = "$src = $dst", isCodeGenOnly = 1, Defs = [NZV, C],

@@ -98,10 +98,14 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
       setOperationAction(Op, VT, Expand);
   }
 
-  // The 8-bit ALU shifts one bit at a time; custom-lower shifts by a constant.
-  setOperationAction(ISD::SHL, MVT::i8, Custom);
-  setOperationAction(ISD::SRL, MVT::i8, Custom);
-  setOperationAction(ISD::SRA, MVT::i8, Custom);
+  // The ALU shifts one bit at a time. A byte shifted by a constant is that
+  // many single-bit shifts; everything else goes to the runtime, which is
+  // where a loop belongs - see LowerShift. i16 is custom rather than LibCall
+  // because the sign splat has to be picked out of it first, and because
+  // LibCall is not an action legalization honours for a shift anyway.
+  for (MVT VT : {MVT::i8, MVT::i16})
+    for (auto Op : {ISD::SHL, ISD::SRL, ISD::SRA})
+      setOperationAction(Op, VT, Custom);
 }
 
 // Fold a constant displacement into the global address it is added to.
@@ -364,6 +368,17 @@ static MachineBasicBlock *emitSelect(MachineInstr &MI,
   MF.insert(It, FalseMBB);
   MF.insert(It, SinkMBB);
 
+  // A select is a value like any other, so it can be an argument of a call and
+  // is then expanded between the frame setup and the call itself. Splitting
+  // the block leaves the frame opened in one block and closed in another, and
+  // every block in between has to say how much of it is open or the machine
+  // verifier rejects the function - a frame size on entry that no predecessor
+  // computed. The blocks made here are inside whatever the block they came
+  // from was inside.
+  unsigned CallFrameSize = TII.getCallFrameSizeAt(MI);
+  FalseMBB->setCallFrameSize(CallFrameSize);
+  SinkMBB->setCallFrameSize(CallFrameSize);
+
   // Everything after the select moves to the join block.
   SinkMBB->splice(SinkMBB->begin(), ThisMBB,
                   std::next(MachineBasicBlock::iterator(MI)), ThisMBB->end());
@@ -400,16 +415,6 @@ static int getByteTemp(MachineFunction &MF) {
   if (FI == -1) {
     FI = MF.getFrameInfo().CreateSpillStackObject(1, Align(1));
     FuncInfo->setByteTempFI(FI);
-  }
-  return FI;
-}
-
-static int getShiftWord(MachineFunction &MF) {
-  auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
-  int FI = FuncInfo->getShiftWordFI();
-  if (FI == -1) {
-    FI = MF.getFrameInfo().CreateSpillStackObject(2, Align(1));
-    FuncInfo->setShiftWordFI(FI);
   }
   return FI;
 }
@@ -453,141 +458,6 @@ static MachineBasicBlock *emitMulDiv(MachineInstr &MI, MachineBasicBlock *MBB,
   return MBB;
 }
 
-// Shift by a variable amount: a countdown loop over the single-bit shift.
-//
-//   entry: tst count; beq done          (a count of zero shifts nothing)
-//   loop:  lsla; dec count; bne loop
-//   done:
-//
-// The count lives in a frame byte rather than a register so that A stays free
-// for the value, which it has to hold across every iteration.
-static MachineBasicBlock *emitShiftLoop(MachineInstr &MI,
-                                        MachineBasicBlock *EntryMBB,
-                                        unsigned ShiftOpc) {
-  MachineFunction &MF = *EntryMBB->getParent();
-  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
-  MachineRegisterInfo &MRI = MF.getRegInfo();
-  DebugLoc DL = MI.getDebugLoc();
-  const BasicBlock *BB = EntryMBB->getBasicBlock();
-  MachineFunction::iterator It = ++EntryMBB->getIterator();
-
-  MachineBasicBlock *LoopMBB = MF.CreateMachineBasicBlock(BB);
-  MachineBasicBlock *DoneMBB = MF.CreateMachineBasicBlock(BB);
-  MF.insert(It, LoopMBB);
-  MF.insert(It, DoneMBB);
-
-  DoneMBB->splice(DoneMBB->begin(), EntryMBB,
-                  std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
-  DoneMBB->transferSuccessorsAndUpdatePHIs(EntryMBB);
-
-  EntryMBB->addSuccessor(LoopMBB);
-  EntryMBB->addSuccessor(DoneMBB);
-  LoopMBB->addSuccessor(LoopMBB);
-  LoopMBB->addSuccessor(DoneMBB);
-
-  int FI = getByteTemp(MF);
-  Register Src = MI.getOperand(1).getReg();
-
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STAsp))
-      .add(MI.getOperand(2))
-      .addFrameIndex(FI)
-      .addImm(0);
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::TSTsp)).addFrameIndex(FI).addImm(0);
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::BEQcc)).addMBB(DoneMBB);
-
-  Register Cur = MRI.createVirtualRegister(&HCS08::GR8RegClass);
-  Register Next = MRI.createVirtualRegister(&HCS08::GR8RegClass);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::PHI), Cur)
-      .addReg(Src)
-      .addMBB(EntryMBB)
-      .addReg(Next)
-      .addMBB(LoopMBB);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ShiftOpc), Next).addReg(Cur);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::DECsp))
-      .addFrameIndex(FI)
-      .addImm(0);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::BNEcc)).addMBB(LoopMBB);
-
-  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(HCS08::PHI),
-          MI.getOperand(0).getReg())
-      .addReg(Src)
-      .addMBB(EntryMBB)
-      .addReg(Next)
-      .addMBB(LoopMBB);
-
-  MI.eraseFromParent();
-  return DoneMBB;
-}
-
-// A 16-bit shift by a variable amount. Same countdown loop as the byte case,
-// but the value never enters a register: the read-modify-write forms shift a
-// frame byte in place and a rotate carries between the two halves, so the loop
-// body is four memory operations and no allocation problem at all.
-//
-// C promotes both operands of a shift to int, so this is what an ordinary
-// "c << n" on two chars turns into - not a corner case.
-static MachineBasicBlock *emitShiftLoop16(MachineInstr &MI,
-                                          MachineBasicBlock *EntryMBB,
-                                          unsigned FirstOpc, unsigned ThenOpc,
-                                          bool LowByteFirst) {
-  MachineFunction &MF = *EntryMBB->getParent();
-  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
-  DebugLoc DL = MI.getDebugLoc();
-  const BasicBlock *BB = EntryMBB->getBasicBlock();
-  MachineFunction::iterator It = ++EntryMBB->getIterator();
-
-  MachineBasicBlock *LoopMBB = MF.CreateMachineBasicBlock(BB);
-  MachineBasicBlock *DoneMBB = MF.CreateMachineBasicBlock(BB);
-  MF.insert(It, LoopMBB);
-  MF.insert(It, DoneMBB);
-
-  DoneMBB->splice(DoneMBB->begin(), EntryMBB,
-                  std::next(MachineBasicBlock::iterator(MI)), EntryMBB->end());
-  DoneMBB->transferSuccessorsAndUpdatePHIs(EntryMBB);
-
-  EntryMBB->addSuccessor(LoopMBB);
-  EntryMBB->addSuccessor(DoneMBB);
-  LoopMBB->addSuccessor(LoopMBB);
-  LoopMBB->addSuccessor(DoneMBB);
-
-  int Val = getShiftWord(MF);
-  int Cnt = getByteTemp(MF);
-
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STHXsp))
-      .add(MI.getOperand(1))
-      .addFrameIndex(Val)
-      .addImm(0);
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::STAsp))
-      .add(MI.getOperand(2))
-      .addFrameIndex(Cnt)
-      .addImm(0);
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::TSTsp)).addFrameIndex(Cnt).addImm(0);
-  BuildMI(*EntryMBB, MI, DL, TII.get(HCS08::BEQcc)).addMBB(DoneMBB);
-
-  // Big-endian, so the high half is at offset 0. A left shift starts at the
-  // low byte and carries upwards; a right shift starts at the high byte and
-  // carries down.
-  unsigned First = LowByteFirst ? 1 : 0, Then = LowByteFirst ? 0 : 1;
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(FirstOpc))
-      .addFrameIndex(Val)
-      .addImm(First);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ThenOpc))
-      .addFrameIndex(Val)
-      .addImm(Then);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::DECsp))
-      .addFrameIndex(Cnt)
-      .addImm(0);
-  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(HCS08::BNEcc)).addMBB(LoopMBB);
-
-  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(HCS08::LDHXsp),
-          MI.getOperand(0).getReg())
-      .addFrameIndex(Val)
-      .addImm(0);
-
-  MI.eraseFromParent();
-  return DoneMBB;
-}
-
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {
@@ -606,15 +476,6 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     return emitMulDiv(MI, MBB, HCS08::DIV8, /*WantRemainder=*/false);
   case HCS08::UREM8rr:
     return emitMulDiv(MI, MBB, HCS08::DIV8, /*WantRemainder=*/true);
-  case HCS08::SHL8v: return emitShiftLoop(MI, MBB, HCS08::SHL8);
-  case HCS08::SRL8v: return emitShiftLoop(MI, MBB, HCS08::SRL8);
-  case HCS08::SRA8v: return emitShiftLoop(MI, MBB, HCS08::SRA8);
-  case HCS08::SHL16v:
-    return emitShiftLoop16(MI, MBB, HCS08::LSLsp, HCS08::ROLsp, true);
-  case HCS08::SRL16v:
-    return emitShiftLoop16(MI, MBB, HCS08::LSRsp, HCS08::RORsp, false);
-  case HCS08::SRA16v:
-    return emitShiftLoop16(MI, MBB, HCS08::ASRsp, HCS08::RORsp, false);
   case HCS08::ADD16rr: return emitALU16(MI, MBB, HCS08::ADD16m, false);
   case HCS08::SUB16rr: return emitALU16(MI, MBB, HCS08::SUB16m, false);
   case HCS08::AND16rr: return emitALU16(MI, MBB, HCS08::AND16m, false);
@@ -658,31 +519,71 @@ HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   return MBB;
 }
 
-SDValue HCS08TargetLowering::LowerShift(SDValue Op, SelectionDAG &DAG) const {
-  // A variable count becomes a loop over the single-bit shift, which the
-  // pseudo builds, so hand the node back untouched. Returning a null SDValue
-  // here would not do that - legalization reads it as "no custom lowering
-  // after all" and falls through to the generic expansion.
-  auto *C = dyn_cast<ConstantSDNode>(Op.getOperand(1));
-  if (!C)
-    return Op;
-
-  unsigned Cnt = C->getZExtValue() & 0x7; // in-range constant shift amount
-  SDLoc dl(Op);
-  SDValue Val = Op.getOperand(0);
-
-  unsigned NodeTy;
-  switch (Op.getOpcode()) {
-  case ISD::SHL: NodeTy = HCS08ISD::SHL1; break;
-  case ISD::SRL: NodeTy = HCS08ISD::SRL1; break;
-  case ISD::SRA: NodeTy = HCS08ISD::SRA1; break;
+/// The runtime routine for a 16-bit shift. There is no 8-bit set: an 8-bit
+/// shift by a variable amount is widened into one of these rather than given
+/// three more routines of its own.
+static RTLIB::Libcall shiftLibcall(unsigned Opcode) {
+  switch (Opcode) {
+  case ISD::SHL: return RTLIB::SHL_I16;
+  case ISD::SRL: return RTLIB::SRL_I16;
+  case ISD::SRA: return RTLIB::SRA_I16;
   default:
     llvm_unreachable("not a shift");
   }
+}
 
-  for (unsigned i = 0; i != Cnt; ++i)
-    Val = DAG.getNode(NodeTy, dl, MVT::i8, Val);
-  return Val;
+SDValue HCS08TargetLowering::LowerShift(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc dl(Op);
+  EVT VT = Op.getValueType();
+  SDValue Val = Op.getOperand(0);
+  SDValue Cnt = Op.getOperand(1);
+  auto *C = dyn_cast<ConstantSDNode>(Cnt);
+
+  // The accumulator shifts one bit at a time, so a byte shifted by a constant
+  // is that many single-bit shifts in a row.
+  if (VT == MVT::i8 && C) {
+    unsigned N = C->getZExtValue() & 0x7;
+    unsigned NodeTy = Op.getOpcode() == ISD::SHL   ? HCS08ISD::SHL1
+                      : Op.getOpcode() == ISD::SRL ? HCS08ISD::SRL1
+                                                   : HCS08ISD::SRA1;
+    for (unsigned i = 0; i != N; ++i)
+      Val = DAG.getNode(NodeTy, dl, MVT::i8, Val);
+    return Val;
+  }
+
+  // Widening a word to a doubleword arrives here as an arithmetic shift right
+  // by 15. That is a sign splat, and SIGNMASK16 does it in a straight line, so
+  // leave the node alone for the pattern to match rather than calling out for
+  // it. Returning a null SDValue would not do that: legalization reads that as
+  // "no custom lowering after all" and falls through to a generic expansion.
+  if (VT == MVT::i16 && Op.getOpcode() == ISD::SRA && C &&
+      C->getZExtValue() == 15)
+    return Op;
+
+  // Everything else is the library's. Shifting by a variable amount is a loop
+  // whichever way it is done, and a loop built here would be a loop inside
+  // whatever it was part of: expanded as the argument of a call, its branches
+  // land between ADJCALLSTACKDOWN and the call and split the frame across
+  // basic blocks. A call has no such problem - the 32-bit shifts and the
+  // divides have gone this way from the start - and it is smaller besides,
+  // since the loop is written down once instead of at every use.
+  //
+  // A byte is widened to a word first. Three more routines to save one
+  // iteration is not a trade worth making, and the count is already in the
+  // right place either way.
+  bool IsByte = VT == MVT::i8;
+  if (IsByte) {
+    unsigned Ext = Op.getOpcode() == ISD::SRA ? ISD::SIGN_EXTEND
+                                              : ISD::ZERO_EXTEND;
+    Val = DAG.getNode(Ext, dl, MVT::i16, Val);
+  }
+
+  MakeLibCallOptions CallOptions;
+  CallOptions.setIsSigned(Op.getOpcode() == ISD::SRA);
+  SDValue R = makeLibCall(DAG, shiftLibcall(Op.getOpcode()), MVT::i16,
+                          {Val, Cnt}, CallOptions, dl)
+                  .first;
+  return IsByte ? DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, R) : R;
 }
 
 // Translate an ISD condition code for an integer compare of A against an

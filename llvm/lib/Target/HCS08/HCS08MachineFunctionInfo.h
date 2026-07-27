@@ -53,7 +53,6 @@ class HCS08MachineFunctionInfo : public MachineFunctionInfo {
   /// is: they are read by lsl, ror, asr, tst, dec and ldx, and the direct-page
   /// column has none of those, so a bank slot could be written but not worked
   /// on.
-  int ShiftWordFI = -1;
   int ByteTempFI = -1;
 
   /// Bytes of the bank handed out so far. Two things allocate from it - these
@@ -69,8 +68,6 @@ public:
   HCS08Scratch &getWord16Temp() { return Word16Temp; }
   HCS08Scratch &getWord16Temp2() { return Word16Temp2; }
 
-  int getShiftWordFI() const { return ShiftWordFI; }
-  void setShiftWordFI(int FI) { ShiftWordFI = FI; }
 
   int getByteTempFI() const { return ByteTempFI; }
   void setByteTempFI(int FI) { ByteTempFI = FI; }

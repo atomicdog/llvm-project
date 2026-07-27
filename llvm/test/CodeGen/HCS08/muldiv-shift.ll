@@ -38,32 +38,34 @@ define i8 @remainder(i8 %a, i8 %b) {
   ret i8 %r
 }
 
-; A variable count is a countdown loop over the single-bit shift. The count
-; lives in a frame byte so that A stays free for the value, and a count of zero
-; has to skip the loop rather than wrap around.
+; A variable count goes to the runtime. It is a loop whichever way it is done,
+; and a loop written out here is a loop inside whatever it was part of - as the
+; argument of a call it splits the call frame across basic blocks. There is no
+; 8-bit set of routines: a byte is widened and shifted as a word, which costs
+; one iteration and saves three functions.
 define i8 @shift_left(i8 %a, i8 %b) {
 ; CHECK-LABEL: shift_left:
-; CHECK:       tst ${{[0-9a-f]+}},x
-; CHECK-NEXT:  beq
-; CHECK:       lsla
-; CHECK-NEXT:  dec ${{[0-9a-f]+}},sp
-; CHECK-NEXT:  bne
+; CHECK:       clrh
+; CHECK:       jsr __ashlhi3
+; CHECK-NEXT:  txa
   %r = shl i8 %a, %b
   ret i8 %r
 }
 
 define i8 @shift_right_logical(i8 %a, i8 %b) {
 ; CHECK-LABEL: shift_right_logical:
-; CHECK:       lsra
-; CHECK-NEXT:  dec ${{[0-9a-f]+}},sp
+; CHECK:       clrh
+; CHECK:       jsr __lshrhi3
   %r = lshr i8 %a, %b
   ret i8 %r
 }
 
+; The arithmetic one has to sign-extend rather than clear H, or the bits
+; shifted down into the byte would be zeroes instead of copies of the sign.
 define i8 @shift_right_arithmetic(i8 %a, i8 %b) {
 ; CHECK-LABEL: shift_right_arithmetic:
-; CHECK:       asra
-; CHECK-NEXT:  dec ${{[0-9a-f]+}},sp
+; CHECK:       sbc #$00
+; CHECK:       jsr __ashrhi3
   %r = ashr i8 %a, %b
   ret i8 %r
 }

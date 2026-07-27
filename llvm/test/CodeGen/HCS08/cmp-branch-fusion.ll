@@ -37,13 +37,34 @@ done:
   ret i8 %r
 }
 
-; The countdown a variable shift ends with is the same shape: the decrement
-; sets the flags and the branch reads them, with no room in between.
-define i8 @shift_loop(i8 %a, i8 %b) {
-; CHECK-LABEL: shift_loop:
-; CHECK:       lsla
-; CHECK-NEXT:  dec ${{[0-9a-f]+}},sp
+; A countdown loop is the same shape from the other direction: the value
+; carried around the latch is live out of it, so allocation wants to put a
+; reload at the end of the block, and the test of the counter has to keep its
+; branch. This used to be written as a variable shift, which expanded to
+; exactly such a loop; that loop now lives in the runtime library instead, so
+; the countdown is spelled out here.
+define void @countdown(ptr %p, i8 %n) {
+; CHECK-LABEL: countdown:
+; The entry test, then the latch: both keep their branch immediately after the
+; instruction that set the flags it reads.
+; CHECK:       cmp #$00
+; CHECK-NEXT:  beq
+; CHECK:       cmp #$00
 ; CHECK-NEXT:  bne
-  %r = shl i8 %a, %b
-  ret i8 %r
+entry:
+  %z = icmp eq i8 %n, 0
+  br i1 %z, label %done, label %loop
+
+loop:
+  %i = phi i8 [ %n, %entry ], [ %i.next, %loop ]
+  %acc = phi i8 [ 0, %entry ], [ %acc.next, %loop ]
+  %v = load volatile i8, ptr %p
+  %acc.next = add i8 %acc, %v
+  store volatile i8 %acc.next, ptr %p
+  %i.next = add i8 %i, -1
+  %c = icmp eq i8 %i.next, 0
+  br i1 %c, label %done, label %loop
+
+done:
+  ret void
 }

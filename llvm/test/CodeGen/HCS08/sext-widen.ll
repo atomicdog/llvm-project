@@ -77,10 +77,11 @@ define float @widen_into_libcall_f32(i16 %a) {
   ret float %r
 }
 
-; A variable count is still a loop; only the constant 15 is special-cased.
+; Any other count goes to the runtime; 15 is the one that is answered here.
 define i16 @variable_shift(i16 %a, i8 %n) {
 ; CHECK-LABEL: variable_shift:
-; CHECK: asr
+; CHECK-NOT: pshh
+; CHECK: jsr __ashrhi3
   %s = zext i8 %n to i16
   %r = ashr i16 %a, %s
   ret i16 %r

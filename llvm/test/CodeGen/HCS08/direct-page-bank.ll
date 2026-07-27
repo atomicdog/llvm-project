@@ -77,3 +77,29 @@ define i16 @across_call(i16 %a, i16 %b) {
 ; fit an R_HCS08_8 overflow at link time rather than a wrapped address.
 
 ; RELOC: R_HCS08_8 __hcs08_dp_bank
+
+; The supported way to ask for the bank is clang's -mdirect-page-bank=, which
+; arrives as a function attribute; -hcs08-dp-bank-size above is the override
+; that llc and these tests use in place of a clang to set one. A function
+; without the attribute gets no bank even when one beside it has.
+;
+; RUN: llc -mtriple=hcs08 -verify-machineinstrs < %s | \
+; RUN:   FileCheck %s --check-prefix=ATTR
+
+define void @by_attribute(ptr %p, i32 %a, i32 %b) #0 {
+; ATTR-LABEL: by_attribute:
+; ATTR: __hcs08_dp_bank
+  %s = add i32 %a, %b
+  store i32 %s, ptr %p
+  ret void
+}
+
+define void @no_attribute(ptr %p, i32 %a, i32 %b) {
+; ATTR-LABEL: no_attribute:
+; ATTR-NOT: __hcs08_dp_bank
+  %s = add i32 %a, %b
+  store i32 %s, ptr %p
+  ret void
+}
+
+attributes #0 = { "hcs08-direct-page-bank"="8" }

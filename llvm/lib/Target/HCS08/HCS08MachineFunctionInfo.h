@@ -60,6 +60,13 @@ class HCS08MachineFunctionInfo : public MachineFunctionInfo {
   /// and a slot each is what keeps them from landing on top of one another.
   unsigned DPBankUsed = 0;
 
+  /// Bytes of direct page this function may spend, read once from the
+  /// function's attribute. How much of the page is available is a property of
+  /// the board and not of the program, so it arrives from the command line -
+  /// clang's -mdirect-page-bank= - and the linker script has to reserve the
+  /// same number at __hcs08_dp_bank.
+  unsigned DPBankSize = 0;
+
   /// Where the unnamed arguments of a variadic function start: a fixed object
   /// at the first byte past the named ones, whose address is what va_start
   /// writes into the va_list. -1 in a function that is not variadic.
@@ -67,7 +74,8 @@ class HCS08MachineFunctionInfo : public MachineFunctionInfo {
 
 public:
   HCS08MachineFunctionInfo() = default;
-  HCS08MachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI) {}
+  HCS08MachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI)
+      : DPBankSize(getHCS08DPBankSize(F)) {}
 
   HCS08Scratch &getALUTemp() { return ALUTemp; }
   HCS08Scratch &getWord16Temp() { return Word16Temp; }
@@ -81,11 +89,12 @@ public:
   void setVarArgsFrameIndex(int FI) { VarArgsFrameIndex = FI; }
 
   unsigned getDPBankUsed() const { return DPBankUsed; }
+  unsigned getDPBankSize() const { return DPBankSize; }
 
   /// Take `Bytes` from the bank, or return -1 if that would run past the end
   /// of what the linker script was told to reserve.
   int allocDPBank(unsigned Bytes) {
-    if (DPBankUsed + Bytes > getHCS08DPBankSize())
+    if (DPBankUsed + Bytes > DPBankSize)
       return -1;
     int Offset = DPBankUsed;
     DPBankUsed += Bytes;

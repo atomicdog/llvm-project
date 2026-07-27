@@ -5632,6 +5632,12 @@ def mstack_probe_size : Joined<["-"], "mstack-probe-size=">, Group<m_Group>,
   MarshallingInfoInt<CodeGenOpts<"StackProbeSize">, "4096">;
 def mstack_arg_probe : Flag<["-"], "mstack-arg-probe">, Group<m_Group>,
   HelpText<"Enable stack probes">;
+def mdirect_page_bank_EQ : Joined<["-"], "mdirect-page-bank=">, Group<m_Group>,
+  Visibility<[ClangOption, CC1Option]>,
+  HelpText<"Bytes of the HCS08 direct page to spend on the compiler's spill "
+           "bank (0, the default, uses none). The linker script must reserve "
+           "exactly this many bytes at __hcs08_dp_bank">,
+  MarshallingInfoInt<CodeGenOpts<"HCS08DirectPageBank">>;
 def mzos_sys_include_EQ : Joined<["-"], "mzos-sys-include=">, MetaVarName<"<SysInclude>">,
     HelpText<"Path to system headers on z/OS">;
 def mno_stack_arg_probe : Flag<["-"], "mno-stack-arg-probe">, Group<m_Group>,

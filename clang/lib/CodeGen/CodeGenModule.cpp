@@ -3031,6 +3031,15 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     B.addAttribute("stack-probe-size",
                    std::to_string(CodeGenOpts.StackProbeSize));
 
+  // How much of the HCS08 direct page the compiler may spend on its spill
+  // bank. It is a property of the board rather than of the program - the low
+  // end of the page is memory-mapped registers and how much RAM follows them
+  // differs from part to part - so the compiler never picks a size, and the
+  // same number has to be reserved by the linker script at __hcs08_dp_bank.
+  if (CodeGenOpts.HCS08DirectPageBank)
+    B.addAttribute("hcs08-direct-page-bank",
+                   std::to_string(CodeGenOpts.HCS08DirectPageBank));
+
   if (!hasUnwindExceptions(LangOpts))
     B.addAttribute(llvm::Attribute::NoUnwind);
 

@@ -442,6 +442,54 @@ reserve is an undefined-symbol error and one it puts above `$00FF` is an
 `R_HCS08_8` overflow. Neither fails quietly, and the compiler never picks the
 address.
 
+## 17a. The contract between the flag and the linker script
+
+Two numbers have to agree and they are set in different files, so the contract
+is arranged to make a disagreement fail at link time rather than at run time.
+
+**Asking for it.** `clang -mdirect-page-bank=N`. It reaches the backend as the
+function attribute `"hcs08-direct-page-bank"`, one per function, so it survives
+inlining and LTO the way a global option would not; `-hcs08-dp-bank-size=N`
+overrides it, for `llc` and for tests that have no clang to set an attribute.
+The default is none, because the page is the user's (§15) and a compiler that
+helped itself to some by default would be taking it from whatever the board
+needed it for. Above 256 the driver refuses: a byte past the page has no
+direct-page form to be addressed by.
+
+**Reserving it.** The script must place `__hcs08_dp_bank` and give it the same
+N. **Anchor it to the top of the page**, which is what makes a disagreement
+say so:
+
+    HCS08_DP_BANK_SIZE = 8;
+    __hcs08_dp_bank = 0x0100 - HCS08_DP_BANK_SIZE;
+
+    SECTIONS {
+      .page0 (NOLOAD) : { *(.page0) *(.page0.*) __page0_end = .; } > page0
+      ...
+    }
+    ASSERT(__page0_end <= __hcs08_dp_bank, "direct page overflowed into the bank")
+
+Byte *k* of the bank is then at `$0100 - N + k`. Every byte the compiler was
+promised is inside the page, and the first byte past it is `$0100` - which is
+an `R_HCS08_8` overflow naming `__hcs08_dp_bank`, not a silent write over
+whatever the script put next. Compiling with 8 against a script that reserved 4
+gives
+
+    ld.lld: error: relocation R_HCS08_8 out of range: 256 is not in
+    [-128, 255]; references '__hcs08_dp_bank'
+
+Reserving none of it at all is an undefined-symbol error, equally loud. Growing
+the bank downwards also keeps the user's `.page0` at fixed addresses, which
+matters on a part where those are chosen to sit above the memory-mapped
+registers.
+
+**Mixing is safe.** A library built without the bank and a program built with
+it link and run together: nothing in the bank is live across a call (§17), so a
+callee that uses it cannot disturb a caller that was using it too. The
+consequence is only that the saving applies to whatever was compiled with the
+flag - a program linked against a stock runtime gets it in its own code and not
+in the library's.
+
 ## 18. What the bank turned out to be worth
 
 `HCS08DirectPageBank` implements §17, and measuring it moved two of that
@@ -480,6 +528,14 @@ bytes to 18, where promotion afterwards could only reach 22 - the `ais` pair
 had already been emitted by then. Over the same 155 sources: **12688 bytes,
 7.63%**, 78 sources smaller and none larger. Four bytes of bank gets 7.59% of
 that, because the first scratch word is where nearly all of it is.
+
+Remeasured 2026-07-26 over the 36 sources the runtime is actually built from,
+with eight bytes of bank: **7105 bytes, 9.35%**. The figure moved up because
+the variable-shift loops that used to be expanded inline are libcalls now
+(§17a is where the flag that switches this on is described), so what is left in
+these functions is a higher proportion of the 16-bit chains the bank helps.
+The whole simulator matrix - 240 cases - passes with the bank on as well as
+off; `f32matrix.py --cflags=-mdirect-page-bank=8` is that run.
 
 These slots need none of the analysis above. Each expansion fills its slot and
 consumes it within itself, so no two uses are ever live at once and none

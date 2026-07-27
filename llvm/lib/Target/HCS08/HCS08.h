@@ -34,6 +34,7 @@ enum CondCode {
 
 namespace llvm {
 class FunctionPass;
+class Function;
 class HCS08TargetMachine;
 class PassRegistry;
 
@@ -50,8 +51,13 @@ inline constexpr int HCS08IndirectCallBlockSize = 4;
 /// board, so the linker script places it. See CodeGenDesign.md section 17.
 inline constexpr char HCS08DPBankSymbol[] = "__hcs08_dp_bank";
 
-/// Bytes of direct page the bank may use, 0 if it is switched off.
-unsigned getHCS08DPBankSize();
+/// Bytes of direct page `F` may spend on the bank, 0 if it is switched off.
+///
+/// The number comes from clang's -mdirect-page-bank= as a function attribute,
+/// because how much of the page is free is a property of the board and not of
+/// the program. -hcs08-dp-bank-size overrides it, for llc and for tests that
+/// have no clang to set an attribute.
+unsigned getHCS08DPBankSize(const Function &F);
 
 /// Holds a conditional branch together with the instruction that set the flags
 /// it reads, so that register allocation cannot insert a reload between them.

@@ -1547,6 +1547,23 @@ void Clang::AddAMDGPUTargetArgs(const ArgList &Args,
     A->render(Args, CmdArgs);
 }
 
+void Clang::AddHCS08TargetArgs(const ArgList &Args,
+                               ArgStringList &CmdArgs) const {
+  // How much of the direct page the compiler may spend on its spill bank. The
+  // page is 256 bytes and starts with the memory-mapped registers, so a bank
+  // is a small number of bytes out of what is left; anything that does not fit
+  // in the page cannot be a direct-page address at all.
+  if (Arg *A = Args.getLastArg(options::OPT_mdirect_page_bank_EQ)) {
+    StringRef Value = A->getValue();
+    unsigned Size;
+    if (Value.getAsInteger(10, Size) || Size > 256)
+      getToolChain().getDriver().Diag(diag::err_drv_invalid_int_value)
+          << A->getAsString(Args) << Value;
+    else
+      A->render(Args, CmdArgs);
+  }
+}
+
 void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
                                 const ArgList &Args, bool KernelOrKext,
                                 ArgStringList &CmdArgs) const {
@@ -1576,6 +1593,10 @@ void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
 
   case llvm::Triple::amdgpu:
     AddAMDGPUTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::hcs08:
+    AddHCS08TargetArgs(Args, CmdArgs);
     break;
 
   case llvm::Triple::loongarch32:

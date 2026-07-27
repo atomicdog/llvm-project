@@ -57,11 +57,20 @@ STATISTIC(NumRewritten, "Number of frame accesses rewritten to direct page");
 // Off by default. The direct page is the user's to spend (section 15), so
 // taking any of it is a decision the compiler should not make on its own; the
 // linker script has to reserve the bank before this can be turned on.
-static cl::opt<unsigned> BankSize(
+//
+// The supported way to ask for it is clang's -mdirect-page-bank=, which
+// arrives here as a function attribute. This overrides that, for llc and for
+// the tests, which have no clang to set one.
+static cl::opt<unsigned> BankSizeOverride(
     "hcs08-dp-bank-size", cl::Hidden, cl::init(0),
-    cl::desc("Bytes of direct page to spend on the spill bank (0 disables)"));
+    cl::desc("Bytes of direct page to spend on the spill bank (0 disables); "
+             "overrides the -mdirect-page-bank= attribute"));
 
-unsigned llvm::getHCS08DPBankSize() { return BankSize; }
+unsigned llvm::getHCS08DPBankSize(const Function &F) {
+  if (BankSizeOverride.getNumOccurrences())
+    return BankSizeOverride;
+  return F.getFnAttributeAsParsedInteger("hcs08-direct-page-bank", 0);
+}
 
 namespace {
 
@@ -231,7 +240,7 @@ static bool gatherSlot(MachineFunction &MF, const TargetRegisterInfo &TRI,
 }
 
 bool HCS08DirectPageBank::runOnMachineFunction(MachineFunction &MF) {
-  if (BankSize == 0)
+  if (getHCS08DPBankSize(MF.getFunction()) == 0)
     return false;
 
   const HCS08Subtarget &STI = MF.getSubtarget<HCS08Subtarget>();

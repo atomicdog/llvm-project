@@ -769,11 +769,28 @@ let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
   let Defs = [A, NZV, C] in
   def SEXT8to16 : HCS08Inst<7, AddrModeNone, (outs GR16:$dst), (ins GR8:$src),
                             "", []>;
+  // The same sign splat one size up: a word in, and 0 or -1 out according to
+  // its sign. The sign lives in the high byte, so this reaches H through the
+  // stack first and then runs the SEXT8to16 tail.
+  let Defs = [A, NZV, C], Constraints = "$src = $dst" in
+  def SIGNMASK16 : HCS08Inst<9, AddrModeNone, (outs GR16:$dst), (ins GR16:$src),
+                             "", []>;
 }
 
 def : Pat<(i16 (zext GR8:$src)), (ZEXT8to16 GR8:$src)>;
 def : Pat<(i16 (anyext GR8:$src)), (ZEXT8to16 GR8:$src)>;
 def : Pat<(i16 (sext GR8:$src)), (SEXT8to16 GR8:$src)>;
+
+// Widening a word to a doubleword is expanded by type legalization into the
+// word itself and an arithmetic shift right by 15, so that shift is what a
+// sign extension actually looks like by the time it gets here. Left to the
+// generic path it becomes the variable-count loop below - fifteen iterations
+// to compute one of two answers, and, far worse, a loop in the middle of
+// whatever it was part of. When the argument of a call is what is being
+// widened, the branches land between ADJCALLSTACKDOWN and the call itself and
+// tear the call frame across basic blocks, which the machine verifier
+// rejects. Matching the shift here keeps it straight-line.
+def : Pat<(sra GR16:$src, (i8 15)), (SIGNMASK16 GR16:$src)>;
 
 //===----------------------------------------------------------------------===//
 // Multiply and divide.

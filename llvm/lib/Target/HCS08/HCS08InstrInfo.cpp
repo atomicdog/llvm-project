@@ -183,21 +183,41 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   unsigned LoOpc, HiOpc;
   switch (MI.getOpcode()) {
   case HCS08::ZEXT8to16:
-  case HCS08::SEXT8to16: {
-    // The value is in A and wanted in H:X. tax moves it to the low half; what
-    // differs is what H gets. For the sign extension, lsla puts the sign bit
-    // in the carry and 0 - 0 - carry is 0x00 or 0xFF, which psha/pulh carries
-    // into H - clra leaves the carry alone, which is what makes that work.
+  case HCS08::SEXT8to16:
+  case HCS08::SIGNMASK16: {
+    // Three ways of filling H:X from a narrower sign.
+    //
+    // For the two 8-to-16 extensions the value is in A and wanted in H:X. tax
+    // moves it to the low half; what differs is what H gets. For the sign
+    // extension, lsla puts the sign bit in the carry and 0 - 0 - carry is
+    // 0x00 or 0xFF, which psha/pulh carries into H - clra leaves the carry
+    // alone, which is the only reason that works.
+    //
+    // SIGNMASK16 wants that same 0x00-or-0xFF in *both* halves, taken from the
+    // sign of a word already in H:X. The sign is in H, which nothing reads
+    // directly, so pshh/pula fetches it into A first. The tax then has to come
+    // after the mask is computed rather than before it, because here it is the
+    // mask that belongs in X and not the value - which is why this does not
+    // simply share the sequence above.
     MachineBasicBlock &MBB = *MI.getParent();
     DebugLoc DL = MI.getDebugLoc();
+    bool IsMask16 = MI.getOpcode() == HCS08::SIGNMASK16;
 
     // These are the assembler's accumulator-implicit forms, so what they read
     // and write has to be spelled out here: between them tax and clrh (or
     // pulh) define both halves of H:X, which is what the pseudo promised.
     auto Def = RegState::Define | RegState::Implicit;
-    BuildMI(MBB, MI, DL, get(HCS08::TAX))
-        .addReg(HCS08::X, Def)
-        .addReg(HCS08::A, RegState::Implicit);
+
+    if (IsMask16) {
+      BuildMI(MBB, MI, DL, get(HCS08::PSHH))
+          .addReg(HCS08::H, RegState::Implicit);
+      BuildMI(MBB, MI, DL, get(HCS08::PULA)).addReg(HCS08::A, Def);
+    } else {
+      BuildMI(MBB, MI, DL, get(HCS08::TAX))
+          .addReg(HCS08::X, Def)
+          .addReg(HCS08::A, RegState::Implicit);
+    }
+
     if (MI.getOpcode() == HCS08::ZEXT8to16) {
       BuildMI(MBB, MI, DL, get(HCS08::CLRH)).addReg(HCS08::H, Def);
     } else {
@@ -219,6 +239,11 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
           .addReg(HCS08::C, Def)
           .addReg(HCS08::A, RegState::Implicit)
           .addReg(HCS08::C, RegState::Implicit);
+      // A now holds the mask. SIGNMASK16 wants it in X as well as H.
+      if (IsMask16)
+        BuildMI(MBB, MI, DL, get(HCS08::TAX))
+            .addReg(HCS08::X, Def)
+            .addReg(HCS08::A, RegState::Implicit);
       BuildMI(MBB, MI, DL, get(HCS08::PSHA))
           .addReg(HCS08::A, RegState::Implicit);
       BuildMI(MBB, MI, DL, get(HCS08::PULH)).addReg(HCS08::H, Def);

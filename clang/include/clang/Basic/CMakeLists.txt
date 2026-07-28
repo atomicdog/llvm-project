@@ -110,6 +110,10 @@ clang_tablegen(BuiltinsDirectX.inc -gen-clang-builtins
   SOURCE BuiltinsDirectX.td
   TARGET ClangBuiltinsDirectX)
 
+clang_tablegen(BuiltinsHCS08.inc -gen-clang-builtins
+  SOURCE BuiltinsHCS08.td
+  TARGET ClangBuiltinsHCS08)
+
 clang_tablegen(BuiltinsHexagon.inc -gen-clang-builtins
   SOURCE BuiltinsHexagon.td
   TARGET ClangBuiltinsHexagon)

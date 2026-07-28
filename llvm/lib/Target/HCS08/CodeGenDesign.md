@@ -660,6 +660,59 @@ Left undone deliberately: a *non-leaf* handler could save less than all of `N`
 if the save moved into a post-PEI pass that had the call graph. Nothing needs
 it yet.
 
+## 21. The instructions with no expression in C
+
+Seven builtins, for the instructions that act on the CPU instead of on a value.
+Each is a `ClangBuiltin<>` on the intrinsic in `IntrinsicsHCS08.td`, which is
+the whole mapping: the generic path in CGBuiltin looks the name up under the
+target's arch prefix, so there is no HCS08 case in `CGBuiltin.cpp` and no
+`TargetBuiltins/HCS08.cpp`.
+
+| builtin | instruction |
+|---|---|
+| `__builtin_hcs08_sei()` / `_cli()` | `sei` / `cli` |
+| `__builtin_hcs08_get_ccr()` / `_set_ccr(u8)` | `tpa` / `tap` |
+| `__builtin_hcs08_wait()` / `_stop()` | `wait` / `stop` |
+| `__builtin_hcs08_nop()` | `nop` |
+
+**The sense of `sei`/`cli` is the opposite of the guess.** I is a *mask*, so
+`sei` disables interrupts and `cli` enables them. Verified on ucsim rather than
+argued from the mnemonic (`intrtest.c`): `cli` then `get_ccr & 0x08` reads 0,
+`sei` reads 8.
+
+**They are memory barriers, deliberately.** The intrinsics are
+`IntrHasSideEffects` *without* `IntrNoMem`, so LLVM must assume they read and
+write memory. With `IntrNoMem` a load or store could be hoisted out of the
+region the two delimit, which is the one thing a critical section exists to
+prevent. The `barrier` case in `intrinsics.ll` pins this down on non-volatile
+memory, where nothing else would stop the motion.
+
+**`sei`/`cli` alone do not nest.** A function that ends its critical section
+with `cli` unmasks even when its caller had masked. The composable form is the
+register:
+
+    unsigned char s = __builtin_hcs08_get_ccr();
+    __builtin_hcs08_sei();
+    ... critical section ...
+    __builtin_hcs08_set_ccr(s);
+
+Only the control bits round-trip. The condition codes in a `get_ccr` result are
+whatever the last flag-setting instruction left, because ordinary arithmetic may
+be scheduled either side of it - so do not read carry out of one and expect it
+back from the other. `tpa` accordingly does *not* declare `NZV`/`C` as uses:
+nothing defines them at an arbitrary point, so it would be a use of an undefined
+physical register, and the value genuinely is unspecified. `tap` does declare
+both as defs, which is what stops a branch being scheduled across it and testing
+the restored bits instead of its own compare.
+
+Two smaller notes. `nop` is the one instruction here that the MC layer declares
+`hasSideEffects = 0`, so it is selected to a code-generation-only view that says
+otherwise - matched directly, `DeadMachineInstructionElim` would delete the only
+thing the caller asked for. And `stop` is disabled out of reset on most MC9S08
+parts, where enabling it is a write to SOPT; on a part that has not done so it
+behaves as an illegal opcode. That is the program's business, not the
+compiler's.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

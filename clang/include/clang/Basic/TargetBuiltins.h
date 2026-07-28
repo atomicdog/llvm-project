@@ -110,6 +110,17 @@ namespace clang {
   };
   }
 
+  /// HCS08 builtins
+  namespace HCS08 {
+  enum {
+    LastTIBuiltin = clang::Builtin::FirstTSBuiltin - 1,
+#define GET_BUILTIN_ENUMERATORS
+#include "clang/Basic/BuiltinsHCS08.inc"
+#undef GET_BUILTIN_ENUMERATORS
+    LastTSBuiltin
+  };
+  }
+
   /// PPC builtins
   namespace PPC {
     enum {

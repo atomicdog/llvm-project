@@ -496,6 +496,48 @@ def TXA  : Inherent<0x9F, "txa">;
 def : Pat<(HCS08retglue), (RTS)>;
 def : Pat<(HCS08retiglue), (RTI)>;
 
+//===----------------------------------------------------------------------===//
+// Intrinsics
+//
+// The instructions that act on the CPU rather than on a value, and so have no
+// expression in C. See IntrinsicsHCS08.td for what each one promises.
+//===----------------------------------------------------------------------===//
+
+// These four already carry hasSideEffects, which an instruction with no pattern
+// gets by default, so they can be matched as they stand.
+def : Pat<(int_hcs08_sei), (SEI)>;
+def : Pat<(int_hcs08_cli), (CLI)>;
+def : Pat<(int_hcs08_wait), (WAIT)>;
+def : Pat<(int_hcs08_stop), (STOP)>;
+
+let isCodeGenOnly = 1, hasSideEffects = 1 in {
+  // nop is the exception: the MC form above turns hasSideEffects off, so
+  // matching onto it directly would produce an instruction with no defs and
+  // nothing to keep it, and DeadMachineInstructionElim would take away the
+  // one thing the caller asked for. This view shares the encoding and says
+  // the delay is the point.
+  def NOPcg : F8<0x9D, AddrModeInh, (outs), (ins), "nop", [(int_hcs08_nop)]>;
+
+  // Accumulator-implicit at the MC layer, like the immediate loads below, so
+  // codegen needs a view carrying the register to model the data flow.
+  //
+  // tpa reads the whole CCR, condition codes included, but does not declare
+  // them: nothing defines NZV or C at an arbitrary point, so a use here would
+  // be a use of an undefined physical register - and the flags in the result
+  // are genuinely unspecified, because ordinary arithmetic may be scheduled
+  // either side of this. Only the control bits are worth reading, which is
+  // what the intrinsic documents.
+  def TPAr : F8<0x85, AddrModeInh, (outs GR8:$dst), (ins), "tpa",
+                [(set GR8:$dst, (int_hcs08_get_ccr))]>;
+
+  // tap writes the whole register, so whatever a preceding compare put in the
+  // flags is gone. Declaring both halves dead here is what stops a branch
+  // being scheduled across it and testing the restored bits instead.
+  let Defs = [NZV, C] in
+  def TAPr : F8<0x84, AddrModeInh, (outs), (ins GR8:$src), "tap",
+                [(int_hcs08_set_ccr GR8:$src)]>;
+}
+
 // Code-generation-only views of the immediate loads. The MC-layer forms are
 // accumulator-implicit (no register operands); these carry the def register so
 // the selector can model the data flow. They share the real encodings and are

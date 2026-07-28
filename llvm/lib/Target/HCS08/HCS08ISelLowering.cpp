@@ -924,5 +924,10 @@ SDValue HCS08TargetLowering::LowerReturn(
   if (Glue.getNode())
     RetOps.push_back(Glue);
 
-  return DAG.getNode(HCS08ISD::RET_GLUE, dl, MVT::Other, RetOps);
+  // A handler is entered by the interrupt sequence rather than by a jsr, so it
+  // has a different frame to undo on the way out. See section 20.
+  bool IsInterrupt =
+      DAG.getMachineFunction().getFunction().hasFnAttribute("hcs08-interrupt");
+  return DAG.getNode(IsInterrupt ? HCS08ISD::RETI_GLUE : HCS08ISD::RET_GLUE, dl,
+                     MVT::Other, RetOps);
 }

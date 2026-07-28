@@ -26,6 +26,14 @@ include "HCS08InstrFormats.td"
 def HCS08retglue : SDNode<"HCS08ISD::RET_GLUE", SDTNone,
                           [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
+// The same, from an interrupt handler, matched onto RTI. Distinct from the
+// above because the two returns undo different things: rts pops a return
+// address a jsr pushed, rti pops the condition codes, A, X and the return
+// address that the interrupt sequence pushed. Nothing calls a handler, so a
+// function is one or the other and never both.
+def HCS08retiglue : SDNode<"HCS08ISD::RETI_GLUE", SDTNone,
+                           [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+
 // Wraps a constant address (e.g. a global) so it can be selected into an
 // absolute-addressing operand.
 def SDT_HCS08Wrapper : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>, SDTCisPtrTy<0>]>;
@@ -484,8 +492,9 @@ def TXA  : Inherent<0x9F, "txa">;
 // Code generation patterns
 //===----------------------------------------------------------------------===//
 
-// A function return lowers to RTS.
+// A function return lowers to RTS, and an interrupt handler's to RTI.
 def : Pat<(HCS08retglue), (RTS)>;
+def : Pat<(HCS08retiglue), (RTI)>;
 
 // Code-generation-only views of the immediate loads. The MC-layer forms are
 // accumulator-implicit (no register operands); these carry the def register so

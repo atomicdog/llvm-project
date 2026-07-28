@@ -481,6 +481,7 @@ def TargetAMDGPU : TargetArch<["amdgpu", "r600"]>;
 def TargetAnyArm : TargetArch<!listconcat(TargetARM.Arches, TargetAArch64.Arches)>;
 def TargetAVR : TargetArch<["avr"]>;
 def TargetBPF : TargetArch<["bpfel", "bpfeb"]>;
+def TargetHCS08 : TargetArch<["hcs08"]>;
 def TargetLoongArch : TargetArch<["loongarch32", "loongarch64"]>;
 def TargetMips32 : TargetArch<["mips", "mipsel"]>;
 def TargetAnyMips : TargetArch<["mips", "mipsel", "mips64", "mips64el"]>;
@@ -1091,6 +1092,20 @@ def AVRSignal : InheritableAttr, TargetSpecificAttr<TargetAVR> {
   let Spellings = [GCC<"signal">];
   let Subjects = SubjectList<[Function]>;
   let Documentation = [AVRSignalDocs];
+}
+
+def HCS08Interrupt : InheritableAttr, TargetSpecificAttr<TargetHCS08> {
+  let Spellings = [GCC<"interrupt">];
+  let Subjects = SubjectList<[Function]>;
+  let ParseKind = "Interrupt";
+  let Documentation = [HCS08InterruptDocs];
+}
+
+def HCS08NoDirectPageBank : InheritableAttr, TargetSpecificAttr<TargetHCS08> {
+  let Spellings = [GCC<"no_direct_page_bank">];
+  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Documentation = [HCS08NoDirectPageBankDocs];
+  let SimpleHandler = 1;
 }
 
 def AsmLabel : InheritableAttr {

@@ -3310,6 +3310,62 @@ Interrupt handler functions defined with the signal attribute do not re-enable i
 }];
 }
 
+def HCS08InterruptDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "interrupt (HCS08)";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((interrupt))`` attribute on HCS08
+targets. It may be attached to a function definition, which must return ``void``
+and take no parameters, and makes the function usable directly as an interrupt
+service routine: the return becomes ``rti`` rather than ``rts``, and the entry
+and exit code saves what the hardware does not.
+
+The interrupt sequence stacks the program counter, X, A and the condition codes,
+but **not** H. Since H:X is this target's pointer register and its 16-bit
+accumulator, a handler that does anything non-trivial will clobber H, so one
+declared with this attribute pushes H on entry and pops it before the ``rti``.
+
+Placing the handler in the vector table is the linker script's job; the
+attribute only affects code generation. Vector layout differs across MC9S08
+parts, so the compiler does not pick one:
+
+.. code-block:: c
+
+  __attribute__((interrupt)) void tpm_overflow(void) { ... }
+
+.. code-block:: none
+
+  .vectors : { SHORT(tpm_overflow); ... SHORT(_start); } > vectors
+
+If the program is built with ``-mdirect-page-bank=N``, a handler also saves and
+restores the whole bank, because the bank is a single program-wide object whose
+soundness rests on nothing in it being live across a call - and an interrupt is
+not a call. Use ``no_direct_page_bank`` to drop that save when the handler and
+everything it calls stay out of the bank.
+  }];
+}
+
+def HCS08NoDirectPageBankDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "no_direct_page_bank (HCS08)";
+  let Content = [{
+``__attribute__((no_direct_page_bank))`` keeps a function out of the HCS08
+direct-page spill bank that ``-mdirect-page-bank=N`` switches on. The function
+is compiled as though ``N`` were zero, spilling to its frame instead; the rest
+of the program is unaffected.
+
+Its purpose is on an interrupt handler. A handler otherwise has to save and
+restore all ``N`` bytes of the bank, at an ``lda``/``psha`` pair per byte each
+way, because it can preempt a function midway through using it. This attribute
+is a promise that neither the handler nor anything it calls touches the bank, so
+there is nothing to preserve and the save is dropped.
+
+The compiler enforces the half it can see - the handler itself is given no bank
+slots - but it cannot check the callees, so a handler that calls into code built
+with a bank must not carry this attribute.
+  }];
+}
+
 def TargetDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{

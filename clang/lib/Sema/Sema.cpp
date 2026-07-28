@@ -48,6 +48,7 @@
 #include "clang/Sema/SemaCodeCompletion.h"
 #include "clang/Sema/SemaConsumer.h"
 #include "clang/Sema/SemaDirectX.h"
+#include "clang/Sema/SemaHCS08.h"
 #include "clang/Sema/SemaHLSL.h"
 #include "clang/Sema/SemaHexagon.h"
 #include "clang/Sema/SemaLoongArch.h"
@@ -286,6 +287,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
           std::make_unique<SemaCodeCompletion>(*this, CodeCompleter)),
       CUDAPtr(std::make_unique<SemaCUDA>(*this)),
       DirectXPtr(std::make_unique<SemaDirectX>(*this)),
+      HCS08Ptr(std::make_unique<SemaHCS08>(*this)),
       HLSLPtr(std::make_unique<SemaHLSL>(*this)),
       HexagonPtr(std::make_unique<SemaHexagon>(*this)),
       LoongArchPtr(std::make_unique<SemaLoongArch>(*this)),

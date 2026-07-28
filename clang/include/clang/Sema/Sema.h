@@ -160,6 +160,7 @@ class Preprocessor;
 class SemaAMDGPU;
 class SemaARM;
 class SemaAVR;
+class SemaHCS08;
 class SemaBPF;
 class SemaCodeCompletion;
 class SemaCUDA;
@@ -1467,6 +1468,11 @@ public:
     return *BPFPtr;
   }
 
+  SemaHCS08 &HCS08() {
+    assert(HCS08Ptr);
+    return *HCS08Ptr;
+  }
+
   SemaCodeCompletion &CodeCompletion() {
     assert(CodeCompletionPtr);
     return *CodeCompletionPtr;
@@ -1621,6 +1627,7 @@ private:
   std::unique_ptr<SemaCodeCompletion> CodeCompletionPtr;
   std::unique_ptr<SemaCUDA> CUDAPtr;
   std::unique_ptr<SemaDirectX> DirectXPtr;
+  std::unique_ptr<SemaHCS08> HCS08Ptr;
   std::unique_ptr<SemaHLSL> HLSLPtr;
   std::unique_ptr<SemaHexagon> HexagonPtr;
   std::unique_ptr<SemaLoongArch> LoongArchPtr;

@@ -590,6 +590,76 @@ enabled tier, so nothing shipped wrong; but the failure mode was the one that
 does not announce itself, and on a part with one or two kilobytes of RAM a
 256-byte frame is not far away.
 
+## 20. An interrupt handler saves what the hardware did not
+
+`__attribute__((interrupt))` makes a function usable directly as a service
+routine. It must return `void` and take no parameters - Sema says so, and the
+backend repeats it as a `report_fatal_error` for hand-written IR, because an
+incoming stack argument is addressed past a *two*-byte return address and an
+interrupt frame is five, so an argument would be read from the wrong place.
+
+**H is not stacked.** The interrupt sequence pushes the return address, X, A
+and the condition codes; H was added to the CPU08 core after that layout was
+fixed and never joined it. On this target H:X is the pointer register and the
+16-bit accumulator, so nearly every handler clobbers H, and what a lost H
+corrupts is the *interrupted* function - intermittently, at a point unrelated
+to the bug. So the prologue is `pshh` and the epilogue `pulh`, and the return
+is `rti` (`HCS08ISD::RETI_GLUE`, matched onto the existing `RTI`).
+
+This was verified rather than assumed: `swiprobe.s` in the harness sets H:X and
+A, executes `swi`, clobbers everything in the handler, and reads back what
+survived - `A=0x77` and `X=0x34` restored, `H=0xab` not (2026-07-27).
+
+**The bank is the harder half.** §17 makes the direct-page bank sound by one
+argument only: nothing in it is live across a call. An interrupt is not a call.
+It can land between the `sthx` that parks an operand and the `ldhx` that
+collects it, so a handler reaching any banked code has to put back what it
+found. How much it saves has three tiers:
+
+- **No bank, or `no_direct_page_bank`** - nothing. `getHCS08DPBankSize` answers
+  zero for both, which is why there is one condition and not two.
+- **A leaf** - exactly the bytes it allocated. This is exact only because
+  `HCS08DirectPageBank` declines to run on handlers: it runs after PEI, so
+  anything it promoted would be restored by a prologue that never counted it.
+  Giving up promotion costs the 0.50% of §18 and buys the common ISR - a leaf
+  touching no bank - the `pshh`/`pulh` pair and nothing else.
+- **A non-leaf** - all of it. The callees are not visible here and may be using
+  the bank at the instant the interrupt lands.
+
+`__attribute__((no_direct_page_bank))` is the escape hatch, and it is worth
+being precise about what kind. The transitive half - that nothing the handler
+*calls* touches the bank - is the user's word and uncheckable. The local half
+is not merely trusted: `getHCS08DPBankSize` reports zero for such a function, so
+ISel and the promotion pass have no way to hand it a slot, and the corrupting
+combination (uses the bank, does not save it) cannot be built through the
+attributes at all. The negative control in `isrtest.py` has to be written in
+assembly for exactly that reason.
+
+**Ordering is load-bearing.** The prologue is `pshh`, then the bank pushes, then
+`ais -frame`; the epilogue reverses it. `n,sp` displacements are measured from
+where SP finally lands, so a push *after* the `ais` would move SP out from under
+every one of them.
+
+**Vectors are the linker script's job.** The attribute only changes code
+generation. MC9S08 parts do not agree on a vector map, so the compiler does not
+pick one:
+
+    .vectors : { SHORT(tpm_overflow); ... SHORT(_start); } > vectors
+
+The handler is never referenced from code, so it needs `KEEP` or `used` to
+survive section GC.
+
+**The contract with the rest of the program**, alongside §17a's contract with
+the linker script: a handler must be compiled with an `N` at least as large as
+anything else in the program, or carry `no_direct_page_bank`. A handler built
+with no bank while its callees have one saves nothing and corrupts them. That
+one is not checkable here - `N` is a link-time, whole-program quantity and this
+is a per-function decision.
+
+Left undone deliberately: a *non-leaf* handler could save less than all of `N`
+if the save moved into a post-PEI pass that had the call graph. Nothing needs
+it yet.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

@@ -48,6 +48,7 @@
 #include "clang/Sema/SemaAVR.h"
 #include "clang/Sema/SemaBPF.h"
 #include "clang/Sema/SemaCUDA.h"
+#include "clang/Sema/SemaHCS08.h"
 #include "clang/Sema/SemaHLSL.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/SemaM68k.h"
@@ -6681,6 +6682,9 @@ static void handleInterruptAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     break;
   case llvm::Triple::avr:
     S.AVR().handleInterruptAttr(D, AL);
+    break;
+  case llvm::Triple::hcs08:
+    S.HCS08().handleInterruptAttr(D, AL);
     break;
   case llvm::Triple::riscv32:
   case llvm::Triple::riscv64:

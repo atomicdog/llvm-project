@@ -67,6 +67,15 @@ static cl::opt<unsigned> BankSizeOverride(
              "overrides the -mdirect-page-bank= attribute"));
 
 unsigned llvm::getHCS08DPBankSize(const Function &F) {
+  // __attribute__((no_direct_page_bank)) is a promise that this function stays
+  // out of the bank, made so that an interrupt handler need not save it
+  // (section 20). Answering zero here is what makes the promise true of this
+  // function rather than merely asserted: every allocation from the bank goes
+  // through this, so there is no path by which the function can be handed a
+  // slot and then contradict itself. It beats the override too - the override
+  // is a size knob, and this is not about size.
+  if (F.hasFnAttribute("hcs08-no-dp-bank"))
+    return 0;
   if (BankSizeOverride.getNumOccurrences())
     return BankSizeOverride;
   return F.getFnAttributeAsParsedInteger("hcs08-direct-page-bank", 0);
@@ -241,6 +250,18 @@ static bool gatherSlot(MachineFunction &MF, const TargetRegisterInfo &TRI,
 
 bool HCS08DirectPageBank::runOnMachineFunction(MachineFunction &MF) {
   if (getHCS08DPBankSize(MF.getFunction()) == 0)
+    return false;
+
+  // An interrupt handler's prologue has already been written, and how many
+  // bytes of bank it saves was decided from the count as it stood then. This
+  // pass runs after PEI, so anything it took now would be restored by a
+  // prologue that never knew about it - the leak would be silent and would
+  // corrupt the interrupted function, not this one.
+  //
+  // Giving up promotion here is cheap: section 18 measures it at 0.50%, and it
+  // buys the far better deal that a leaf handler touching no bank saves none of
+  // it (section 20).
+  if (MF.getFunction().hasFnAttribute("hcs08-interrupt"))
     return false;
 
   const HCS08Subtarget &STI = MF.getSubtarget<HCS08Subtarget>();

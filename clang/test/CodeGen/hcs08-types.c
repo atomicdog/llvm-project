@@ -6,7 +6,7 @@
 // - and padding would only make objects bigger on a part with a few hundred
 // bytes of RAM.
 
-// CHECK: target datalayout = "E-m:e-p:16:16-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0:8-n8:16-S8"
+// CHECK: target datalayout = "E-m:e-p:16:8-i8:8-i16:8-i32:8-i64:8-f32:8-f64:8-a:0:8-n8:16-S8"
 // CHECK: target triple = "hcs08"
 
 _Static_assert(sizeof(char) == 1, "");

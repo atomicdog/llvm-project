@@ -713,6 +713,44 @@ parts, where enabling it is a write to SOPT; on a part that has not done so it
 behaves as an illegal opcode. That is the program's business, not the
 compiler's.
 
+## 22. `double` is 32 bits
+
+`double` and `long double` are both the same type as `float`. This is an ABI
+decision and it is the user's, taken 2026-07-27.
+
+**64-bit `double` was never a working configuration**, so leaving it at 64 bits
+bought nothing to be conformant with. `__divdf3` alone wants a 302-byte frame
+against the 256-byte ceiling of §19 and does not compile at any setting; even
+if it did, `muldf3` is 14KB and `divdf3` 19KB against a part with 32KB of
+flash. What the wide `double` actually produced was a link error against
+`__adddf3` the first time anyone wrote a floating-point constant without an `f`
+suffix.
+
+Two things it also fixes:
+
+- **`printf("%f")` is possible now.** C's default argument promotions turn a
+  `float` passed through `...` into a `double`; while that was 64 bits the call
+  did not link, wanting `__extendsfdf2` and `__adddf3`. With the two the same
+  width the promotion is the identity. `vafloat.c` checks this end to end,
+  including the case that catches a wrong stride - an `int` read *after* a
+  float in the same list.
+- **`double` arithmetic reaches the runtime that exists.** It is emitted as
+  `float`, so it lands in `__addsf3` and friends, which is the half of
+  compiler-rt this target actually builds.
+
+This is what SDCC does for these parts, and what avr-gcc spells
+`-fshort-double`; clang's AVR target does the same unconditionally.
+`-mdouble=` stays AVR-only in the driver, so asking for 64 bits here is a clean
+*unsupported option for target* rather than a distant undefined symbol - which
+is the right answer, since there is no way to make it work.
+
+**`__SOFTFP__` matters more than before.** `fixsfdi.c` and `fixunssfdi.c` each
+carry two implementations, and the one chosen without it converts through
+`double` to get at a 64-bit intermediate. That used to fail loudly, wanting
+`__muldf3`; now `double` *is* `float`, so it would quietly compute in 24 bits of
+mantissa and return a wrong answer. The define is set by the clang target and
+those two routines are the reason.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

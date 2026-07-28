@@ -15,8 +15,13 @@ _Static_assert(sizeof(int) == 2, "");
 _Static_assert(sizeof(long) == 4, "");
 _Static_assert(sizeof(long long) == 8, "");
 _Static_assert(sizeof(void *) == 2, "");
+// double is 32 bits, the same type as float, and so is long double. f64
+// cannot work on this target at any setting - __divdf3 alone wants a 302-byte
+// frame against a 256-byte ceiling - so leaving double at 64 bits bought a
+// link error rather than conformance. See CodeGenDesign.md section 22.
 _Static_assert(sizeof(float) == 4, "");
-_Static_assert(sizeof(double) == 8, "");
+_Static_assert(sizeof(double) == 4, "");
+_Static_assert(sizeof(long double) == 4, "");
 
 _Static_assert(_Alignof(int) == 1, "");
 _Static_assert(_Alignof(long) == 1, "");
@@ -38,3 +43,15 @@ int add(int a, int b) { return a + b; }
 // CHECK-LABEL: define {{.*}} i8 @deref(
 // CHECK: load i8
 char deref(char *p) { return *p; }
+
+// Being the same type as float, double arithmetic is emitted as float and ends
+// up in the single-precision runtime, which is the half of compiler-rt this
+// target actually builds.
+//
+// CHECK-LABEL: define {{.*}} float @dadd(
+// CHECK: fadd float
+double dadd(double a, double b) { return a + b; }
+
+// CHECK-LABEL: define {{.*}} float @ldadd(
+// CHECK: fadd float
+long double ldadd(long double a, long double b) { return a + b; }

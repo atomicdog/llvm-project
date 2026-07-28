@@ -904,7 +904,15 @@ set(hcs08_SOURCES
   udivmoddi4.c
   # Single precision. __divdf3 and the rest of the double-precision set are
   # over the frame ceiling and are deliberately absent; f32 is the widest
-  # float this target has.
+  # float this target has. Nothing asks for them: clang's `double` is 32 bits
+  # here, so double arithmetic is emitted as float and lands in this set (see
+  # CodeGenDesign.md section 22).
+  #
+  # That makes __SOFTFP__ load-bearing rather than merely tidy. fixsfdi.c and
+  # fixunssfdi.c below each carry two implementations, and the one picked
+  # without it converts through `double` for a 64-bit intermediate. That used
+  # to fail at link time wanting __muldf3; now `double` is `float`, so it would
+  # quietly compute in 24 bits of mantissa and return a wrong answer.
   #
   # fp_mode.c is the generic one: there is no FPU and no status register to
   # ask, so it reports round-to-nearest and drops the inexact flag. __addsf3

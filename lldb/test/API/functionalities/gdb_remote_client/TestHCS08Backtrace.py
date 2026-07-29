@@ -105,7 +105,14 @@ class TestHCS08Backtrace(GDBRemoteTestBase):
 
         # The backtrace itself. Frame 0 is where we halted; 1 and 2 each cost
         # the unwinder a CFA-1 read it could have got wrong.
-        self.assertGreaterEqual(len(thread.frames), 3)
+        # Exactly four, not "at least three". The last is the startup assembly,
+        # which marks the return address undefined to say the stack ends there;
+        # without that the unwinder keeps applying the CIE's rule past the
+        # outermost frame and invents frames out of whatever it reads, which it
+        # will do for as long as anything asks. Asserting the count is what
+        # notices if that ever stops working.
+        self.assertEqual(len(thread.frames), 4)
+        self.assertEqual(thread.GetFrameAtIndex(3).GetFunctionName(), "_start")
         for idx, (name, pc) in enumerate(
             [("leaf", PC_LEAF), ("middle", PC_MIDDLE), ("run", PC_RUN)]
         ):

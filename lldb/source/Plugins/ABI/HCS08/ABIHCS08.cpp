@@ -9,10 +9,15 @@
 #include "ABIHCS08.h"
 
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Core/Value.h"
 #include "lldb/Symbol/UnwindPlan.h"
+#include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/Thread.h"
 #include "lldb/Utility/ArchSpec.h"
+#include "lldb/Utility/RegisterValue.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/ValueObject/ValueObject.h"
+#include "lldb/ValueObject/ValueObjectConstResult.h"
 
 #include "llvm/TargetParser/Triple.h"
 
@@ -201,10 +206,96 @@ Status ABIHCS08::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
   return Status();
 }
 
+/// Read H:X out of whatever the stub gave us.
+///
+/// The index register is the pair of the 8-bit H and X, so a stub may declare
+/// it either way: as a composite named "hx", or as the two halves alone, which
+/// is what the built-in fallback register set does because those are the
+/// registers a BDM probe actually has. Both have to work here, and H is the
+/// high half.
+static std::optional<uint64_t> ReadHX(RegisterContext &reg_ctx) {
+  if (const RegisterInfo *hx = reg_ctx.GetRegisterInfoByName("hx", 0)) {
+    RegisterValue value;
+    if (reg_ctx.ReadRegister(hx, value))
+      return value.GetAsUInt64();
+    return std::nullopt;
+  }
+
+  const RegisterInfo *h = reg_ctx.GetRegisterInfoByName("h", 0);
+  const RegisterInfo *x = reg_ctx.GetRegisterInfoByName("x", 0);
+  if (!h || !x)
+    return std::nullopt;
+  RegisterValue h_value, x_value;
+  if (!reg_ctx.ReadRegister(h, h_value) || !reg_ctx.ReadRegister(x, x_value))
+    return std::nullopt;
+  return ((h_value.GetAsUInt64() & 0xFF) << 8) | (x_value.GetAsUInt64() & 0xFF);
+}
+
+/// Read a return value out of a halted frame.
+///
+/// This needs nothing on the target, which is why it is here when calling a
+/// function from the debugger is not: the value is already sitting in a
+/// register that the frame has not yet had a chance to clobber.
+///
+/// **Everything a C function can return in a register comes back in H:X**,
+/// including the one-byte types, and that is worth stating because the calling
+/// convention appears to say otherwise. `RetCC_HCS08` does assign a bare `i8`
+/// to A, but clang never emits a bare `i8` return: a `char` or `_Bool` is
+/// returned `signext`/`zeroext`, which the backend widens into H:X. Reading A
+/// for a one-byte type would therefore return whatever A happened to hold -
+/// a plausible wrong value, which is the failure this target keeps producing.
+/// Checked against the compiler rather than assumed: `ret i8 42` compiles to
+/// `lda #$2a` and `ret signext i8 42` to `ldhx #$002a`.
+///
+/// Anything wider than two bytes is returned through a hidden pointer the
+/// *caller* supplied on the stack, so once the callee has returned there is
+/// nothing left to say where the value went. Those get nothing rather than a
+/// guess, as do floats, which are four bytes here and go the same way.
 ValueObjectSP
 ABIHCS08::GetReturnValueObjectImpl(Thread &thread,
                                    CompilerType &return_compiler_type) const {
-  return ValueObjectSP();
+  ValueObjectSP return_valobj_sp;
+  if (!return_compiler_type)
+    return return_valobj_sp;
+
+  RegisterContext *reg_ctx = thread.GetRegisterContext().get();
+  if (!reg_ctx)
+    return return_valobj_sp;
+
+  std::optional<uint64_t> byte_size =
+      llvm::expectedToOptional(return_compiler_type.GetByteSize(&thread));
+  if (!byte_size || *byte_size == 0 || *byte_size > 2)
+    return return_valobj_sp;
+
+  const uint32_t type_flags = return_compiler_type.GetTypeInfo(nullptr);
+  if (!(type_flags & (eTypeIsInteger | eTypeIsPointer | eTypeIsEnumeration)))
+    return return_valobj_sp;
+
+  std::optional<uint64_t> raw_value = ReadHX(*reg_ctx);
+  if (!raw_value)
+    return return_valobj_sp;
+
+  // H:X holds the value already extended to 16 bits, so a one-byte type is the
+  // low half of it; re-applying the type's own signedness to that byte gives
+  // back what the function returned either way.
+  Value value;
+  value.SetValueType(Value::ValueType::Scalar);
+  const bool is_signed = (type_flags & eTypeIsSigned) != 0;
+  if (*byte_size == 1) {
+    if (is_signed)
+      value.GetScalar() = static_cast<int8_t>(*raw_value & 0xFF);
+    else
+      value.GetScalar() = static_cast<uint8_t>(*raw_value & 0xFF);
+  } else {
+    if (is_signed)
+      value.GetScalar() = static_cast<int16_t>(*raw_value & 0xFFFF);
+    else
+      value.GetScalar() = static_cast<uint16_t>(*raw_value & 0xFFFF);
+  }
+
+  value.SetCompilerType(return_compiler_type);
+  return ValueObjectConstResult::Create(thread.GetStackFrameAtIndex(0).get(),
+                                        value, ConstString(""));
 }
 
 /// Both unwind plans below say the same two things, and the second of them is

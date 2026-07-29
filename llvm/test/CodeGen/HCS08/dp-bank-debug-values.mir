@@ -1,0 +1,84 @@
+# RUN: llc -mtriple=hcs08 -hcs08-dp-bank-size=8 -run-pass=hcs08-dp-bank %s -o - | FileCheck %s
+
+# The bank moves a spill slot out of the frame after PEI, which is after
+# LiveDebugValues has already written down where things are. A DBG_VALUE naming
+# a promoted slot is left describing an address nothing writes any more, and
+# because the DWARF stays well formed llvm-dwarfdump --verify passes it: the
+# debugger reads whatever is at that stale address and prints a plausible wrong
+# number. See CodeGenDesign.md section 25.
+#
+# Saying nothing is the only honest answer available, because the value now
+# lives at __hcs08_dp_bank plus an offset - a link-time address, and a debug
+# value can carry a register, a constant or a target index but not a
+# relocatable symbol. Declining to promote the slot instead would be better
+# debug info and would make -g compile to different instructions, which is not
+# a trade a pass may make.
+
+--- |
+  define void @promoted(i16 %n) !dbg !4 {
+    ret void
+  }
+  define void @not_promoted(i16 %n) !dbg !9 {
+    ret void
+  }
+
+  !llvm.dbg.cu = !{!0}
+  !llvm.module.flags = !{!2, !3}
+  !0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, producer: "clang", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug)
+  !1 = !DIFile(filename: "bank.c", directory: "/tmp")
+  !2 = !{i32 7, !"Dwarf Version", i32 5}
+  !3 = !{i32 2, !"Debug Info Version", i32 3}
+  !4 = distinct !DISubprogram(name: "promoted", scope: !1, file: !1, line: 1, type: !5, scopeLine: 1, spFlags: DISPFlagDefinition, unit: !0)
+  !5 = !DISubroutineType(types: !6)
+  !6 = !{!7}
+  !7 = !DIBasicType(name: "int", size: 16, encoding: DW_ATE_signed)
+  !8 = !DILocalVariable(name: "v", scope: !4, file: !1, line: 2, type: !7)
+  !9 = distinct !DISubprogram(name: "not_promoted", scope: !1, file: !1, line: 6, type: !5, scopeLine: 6, spFlags: DISPFlagDefinition, unit: !0)
+  !10 = !DILocalVariable(name: "w", scope: !9, file: !1, line: 7, type: !7)
+  !11 = !DILocation(line: 2, column: 3, scope: !4)
+  !12 = !DILocation(line: 7, column: 3, scope: !9)
+...
+---
+# The slot at displacement 1 is stored and then read back in the same block
+# with no call in between, so the bank can hold it and does. The DBG_VALUE
+# naming it has to stop claiming it is at $sp+1.
+name:            promoted
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, offset: -2, size: 2, alignment: 1 }
+frameInfo:
+  stackSize:     2
+body:             |
+  bb.0:
+    liveins: $hx
+    STHXsp $hx, $sp, 1, implicit-def dead $nzv, implicit $sp
+    DBG_VALUE $sp, 0, !8, !DIExpression(DW_OP_plus_uconst, 1), debug-location !11
+    $hx = LDHXsp $sp, 1, implicit-def dead $nzv, implicit $sp
+    RTS implicit $hx
+
+# CHECK-LABEL: name:            promoted
+# CHECK:       STHXdir $hx, &__hcs08_dp_bank
+# CHECK:       DBG_VALUE $noreg, 0, {{.*}}, !DIExpression(DW_OP_plus_uconst, 1)
+# CHECK:       $hx = LDHXdir &__hcs08_dp_bank
+...
+---
+# The same slot, but read without ever being stored in this block, so the value
+# arrived from somewhere the bank cannot have been holding it and the slot
+# stays in the frame. Its DBG_VALUE is still true and must be left alone -
+# dropping every debug value that mentions the frame would be safe and useless.
+name:            not_promoted
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, offset: -2, size: 2, alignment: 1 }
+frameInfo:
+  stackSize:     2
+body:             |
+  bb.0:
+    DBG_VALUE $sp, 0, !10, !DIExpression(DW_OP_plus_uconst, 1), debug-location !12
+    $hx = LDHXsp $sp, 1, implicit-def dead $nzv, implicit $sp
+    RTS implicit $hx
+
+# CHECK-LABEL: name:            not_promoted
+# CHECK:       DBG_VALUE $sp, 0, {{.*}}, !DIExpression(DW_OP_plus_uconst, 1)
+# CHECK:       $hx = LDHXsp $sp, 1, implicit-def dead $nzv, implicit $sp
+...

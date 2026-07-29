@@ -103,4 +103,11 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeHCS08Target() {
   PassRegistry &PR = *PassRegistry::getPassRegistry();
   initializeHCS08DAGToDAGISelLegacyPass(PR);
   initializeHCS08AsmPrinterPass(PR);
+  // The machine passes were declared but never registered, which left them
+  // unreachable by -run-pass and -stop-before, so the only way to test one was
+  // to compile a whole function and read the asm. Registering them is what
+  // lets a .mir test drive a single pass over an input it fully controls.
+  initializeHCS08FuseCompareBranchPass(PR);
+  initializeHCS08StackToIndexedPass(PR);
+  initializeHCS08DirectPageBankPass(PR);
 }

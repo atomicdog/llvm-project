@@ -41,9 +41,11 @@
 #include "HCS08MachineFunctionInfo.h"
 #include "HCS08Subtarget.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
@@ -53,6 +55,8 @@ using namespace llvm;
 
 STATISTIC(NumPromoted, "Number of spill slots promoted to the direct page");
 STATISTIC(NumRewritten, "Number of frame accesses rewritten to direct page");
+STATISTIC(NumDbgDropped,
+          "Number of debug values dropped because their slot was promoted");
 
 // Off by default. The direct page is the user's to spend (section 15), so
 // taking any of it is a decision the compiler should not make on its own; the
@@ -195,6 +199,45 @@ static bool isTransparent(const MachineInstr &MI,
          !MI.modifiesRegister(HCS08::SP, &TRI);
 }
 
+/// Which frame byte an SP-relative debug value names, or nothing if it does
+/// not name one.
+///
+/// PEI rewrites a DBG_VALUE on a frame index into SP plus a leading
+/// DW_OP_plus_uconst, and the displacement it uses is getFrameIndexReference's
+/// - the same formula the candidates below are keyed by, so the two compare
+/// directly without either having to know about the other. Whatever else the
+/// expression goes on to do, a deref or a stack_value, says what becomes of
+/// the bytes once found rather than which bytes they are, so only the leading
+/// term matters here. No leading term at all means the location is SP itself.
+static std::optional<int64_t> debugValueFrameDisp(const MachineInstr &MI) {
+  if (!MI.isDebugValue() || MI.isDebugValueList())
+    return std::nullopt;
+  const MachineOperand &Base = MI.getDebugOperand(0);
+  if (!Base.isReg() || Base.getReg() != HCS08::SP)
+    return std::nullopt;
+
+  const DIExpression *Expr = MI.getDebugExpression();
+  if (Expr && Expr->getNumElements() >= 2 &&
+      Expr->getElement(0) == dwarf::DW_OP_plus_uconst)
+    return (int64_t)Expr->getElement(1);
+  return (int64_t)0;
+}
+
+/// Does this debug value mention SP without saying where, so that nothing can
+/// be concluded about which slot it describes?
+///
+/// Only the list form, whose operands are threaded through the expression by
+/// DW_OP_LLVM_arg rather than sitting at a known position. PEI does not
+/// produce one for a frame index, so this is a safety net rather than a path
+/// that is expected to be taken.
+static bool isOpaqueSPDebugValue(const MachineInstr &MI) {
+  if (!MI.isDebugValueList())
+    return false;
+  return any_of(MI.debug_operands(), [](const MachineOperand &MO) {
+    return MO.isReg() && MO.getReg() == HCS08::SP;
+  });
+}
+
 /// Collect every reference to one frame object and decide whether the bank can
 /// hold it. Returns false the moment something disqualifies it.
 static bool gatherSlot(MachineFunction &MF, const TargetRegisterInfo &TRI,
@@ -208,6 +251,20 @@ static bool gatherSlot(MachineFunction &MF, const TargetRegisterInfo &TRI,
     unsigned Live = 0;
 
     for (MachineInstr &MI : MBB) {
+      // A debug value is not an access. It has to be skipped before anything
+      // else looks at it, because its operands are a register and an immediate
+      // - DBG_VALUE $sp, 0 - which findSPDispOperand would read as an n,sp
+      // access at displacement 0 and which would then disqualify whatever slot
+      // sits at the bottom of the frame. Skipping rather than resetting Live:
+      // describing a value does not end a run.
+      //
+      // This is also what keeps -g from changing which slots are promoted,
+      // which it must not do. Where a promoted slot leaves a debug value
+      // stranded, runOnMachineFunction drops that value afterwards; the
+      // decision itself never sees it.
+      if (MI.isDebugInstr())
+        continue;
+
       if (!isTransparent(MI, TRI)) {
         Live = 0;
         continue;
@@ -298,6 +355,29 @@ bool HCS08DirectPageBank::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = false;
   auto *FuncInfo = MF.getInfo<HCS08MachineFunctionInfo>();
 
+  // Every debug value that names a frame address, gathered once. A promoted
+  // slot's value is no longer where these say it is, and saying nothing is the
+  // only honest answer available: the value now lives at __hcs08_dp_bank plus
+  // an offset, which is a link-time address, and a debug value can carry a
+  // register, a constant or a target index but not a relocatable symbol. The
+  // variable simply reads as optimized out for the range concerned - it
+  // usually has other ranges, in H:X, that are unaffected.
+  //
+  // Dropping is also the only option that leaves codegen alone. Declining to
+  // promote a slot that a debug value names would be better debug info, and
+  // would make -g compile to different instructions than -O2 alone, which is
+  // not a trade this or any pass is allowed to make.
+  SmallVector<std::pair<MachineInstr *, int64_t>, 8> FrameDbgValues;
+  SmallVector<MachineInstr *, 2> OpaqueDbgValues;
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+      if (std::optional<int64_t> D = debugValueFrameDisp(MI))
+        FrameDbgValues.push_back({&MI, *D});
+      else if (isOpaqueSPDebugValue(MI))
+        OpaqueDbgValues.push_back(&MI);
+    }
+  }
+
   for (const Candidate &C : Candidates) {
     // Instruction selection has already taken what it needed for the parked
     // operands of the 16-bit expansions, so this picks up after it.
@@ -323,8 +403,31 @@ bool HCS08DirectPageBank::runOnMachineFunction(MachineFunction &MF) {
       ++NumRewritten;
     }
 
+    // The slot has moved out from under anything that described it.
+    for (auto &[DbgMI, Disp] : FrameDbgValues) {
+      if (Disp < C.Disp || Disp >= C.Disp + int64_t(C.Size))
+        continue;
+      if (DbgMI->isUndefDebugValue())
+        continue;
+      DbgMI->setDebugValueUndef();
+      ++NumDbgDropped;
+    }
+
     ++NumPromoted;
     Changed = true;
+  }
+
+  // A debug value that mentions SP without saying where cannot be shown not to
+  // describe one of the slots just moved, so it goes the same way. Nothing
+  // produces one of these today; it is here so that something which starts to
+  // cannot quietly become wrong.
+  if (Changed) {
+    for (MachineInstr *DbgMI : OpaqueDbgValues) {
+      if (DbgMI->isUndefDebugValue())
+        continue;
+      DbgMI->setDebugValueUndef();
+      ++NumDbgDropped;
+    }
   }
 
   return Changed;

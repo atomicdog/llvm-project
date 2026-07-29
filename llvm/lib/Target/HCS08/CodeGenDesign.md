@@ -959,6 +959,63 @@ the test's, not the compiler's.
 **Not done**: there is still no `.eh_frame`, which is correct, since there is
 no unwinder to read it.
 
+## 25. The bank and the debug info, which did not know about each other
+
+Two bugs, found by auditing what `-g` actually produced rather than by anything
+failing. Both come from the same place: `HCS08DirectPageBank` runs at
+`addPreEmitPass`, which is *after* LiveDebugValues has already written down
+where every value lives.
+
+**The bank left variable locations pointing at addresses nothing writes.** It
+promotes a spill slot to page 0 and rewrites the `n,sp` accesses, but the
+`DBG_VALUE`s naming that slot were untouched, so the location list went on
+saying `DW_OP_breg4 SP+N` for a slot the function no longer uses. Demonstrated
+with `-O2 -g -mdirect-page-bank=8`: named locals claimed `SP+11` and `SP+13`
+while the assembly contained no `$0b,sp`, no `$0d,sp`, no `tsx` and no `,x`
+access at all. `llvm-dwarfdump --verify` passes it, because the DWARF is well
+formed and merely untrue - the §23 failure mode again, a plausible wrong number
+rather than a crash.
+
+The fix is to drop those locations, not to keep them. The value now lives at
+`__hcs08_dp_bank` plus an offset, which is a **link-time** address, and a debug
+value can carry a register, a constant or a target index but not a relocatable
+symbol - `DbgValueLocEntry` has no kind for one. So the variable reads as
+optimized out for that range, which it usually has company for: the same
+variable is typically live in H:X over neighbouring ranges and those are
+unaffected.
+
+The tempting alternative is worse. Declining to promote a slot that a
+`DBG_VALUE` names would give better debug info and would make `-g` compile to
+different instructions than `-O2` alone. **That is not a trade any pass may
+make**, which is also the whole of the second bug:
+
+**`-g` was already changing which slots got promoted.** `gatherSlot` walked
+every instruction in the block, and a `DBG_VALUE $sp, 0, ...` presents a
+register followed by an immediate - exactly the shape `findSPDispOperand`
+matches - so it read as an `n,sp` access at displacement 0 and disqualified
+whatever slot sat at the bottom of the frame. Skipping debug instructions
+before anything else looks at them is the fix, and skipping rather than
+resetting the run, since describing a value does not end one.
+
+That one is worth a note on how it was confirmed. It does not reproduce on a
+small synthetic function - two hand-written cases compiled identically with and
+without `-g`, which looked like evidence that the hazard was theoretical. It
+took a real corpus: **4 of 12 compiler-rt sources produced different
+instructions under `-g`** before the fix, and 0 of 30 configurations after.
+Reasoning about a mechanism is not the same as showing it fires, and a test too
+small to hit it says nothing either way.
+
+`dp-bank-debug-values.mir` covers both directions, which is the part that
+matters: a promoted slot's debug value is dropped, and a slot the bank declined
+- read without being stored first, so its value came from somewhere the bank
+cannot have held it - keeps its debug value untouched. Dropping every debug
+value that mentions the frame would be safe and useless.
+
+Registering the machine passes is what made that test possible. All three were
+declared and none were registered, so `-run-pass` and `-stop-before` could not
+reach them and the only way to exercise one was to compile a whole function and
+read the assembly.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

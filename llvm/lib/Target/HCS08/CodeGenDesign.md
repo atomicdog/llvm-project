@@ -928,9 +928,36 @@ frame size lands the second step somewhere else. `--verify` cannot catch any of
 this - it only says the DWARF is well formed - and reading the unwind rows back
 only proves they are self-consistent.
 
-**Not done**: nothing describes a frame that is only partly built if a signal
-or interrupt lands mid-prologue on the *first* instruction; and there is still
-no `.eh_frame`, which is correct, since there is no unwinder to read it.
+### Confirmed on silicon
+
+`hwcfitest.py` asks the same question of a physical MC9S08AW60 over BDM, and it
+can ask one thing the simulator cannot. A breakpoint stops at an address
+somebody chose; a BDM halt interrupts a running CPU wherever it happens to be,
+including part-way through a prologue - which is the case the per-`ais`
+description exists for and the case no chosen breakpoint would think to probe.
+
+So `hwcfi.c` is shaped to make that likely rather than hoped for: `tiny` has a
+200-byte frame, which is over the 127 an `ais` can step and so takes *two* of
+them at each end, and almost no body, while `leaf` calls it in a loop whose
+body is nothing but the call. **30 halts, all 30 walking four frames correctly,
+5 of them with the frame only partly built** - four at the function's first
+instruction, where the CFA is still `SP+2` against the body's `SP+204`, and one
+at `PC=0x2012`, *between* the two prologue `ais` with 130 of the 204 bytes
+allocated. That last one is the whole argument for describing each `ais`
+separately, observed rather than reasoned about.
+
+Getting there took two corrections worth keeping. The frame has to be made to
+survive optimisation: marking the array `volatile` is not enough, because SROA
+may split an alloca whose accesses are all at constant offsets, volatile or
+not, and it did - two adjacent scalars and a four-byte frame. Letting the
+address escape to a global is what keeps the 200 bytes. And the expected
+backtrace depends on where the halt landed, since an asynchronous stop in
+`leaf` means three frames are live and not four; comparing against a fixed
+depth walks off the top of the stack past `run` and reports a failure that is
+the test's, not the compiler's.
+
+**Not done**: there is still no `.eh_frame`, which is correct, since there is
+no unwinder to read it.
 
 ## Bottom line
 

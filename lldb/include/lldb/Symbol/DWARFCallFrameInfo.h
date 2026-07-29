@@ -141,6 +141,17 @@ private:
 
   const CIE *GetCIE(dw_offset_t cie_offset);
 
+  /// The size of a target address in the entries governed by \a cie.
+  ///
+  /// From DWARF 4 on, a .debug_frame CIE states this itself, and when it does
+  /// it is the authority. The section data can only report what the object
+  /// file claims, which is wrong for any target narrower than its container:
+  /// there is no ELFCLASS16, so a 16-bit machine's code arrives in an
+  /// ELFCLASS32 file whose headers say 4 while every address in the CFI is 2
+  /// bytes wide. .eh_frame has no such field, so there the object file's
+  /// answer is the only one available.
+  uint32_t GetCIEAddressByteSize(const CIE *cie) const;
+
   void GetCFIData();
 
   // Applies the specified DWARF opcode to the given row. This function handle

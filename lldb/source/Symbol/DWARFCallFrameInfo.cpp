@@ -37,15 +37,17 @@ using namespace llvm::dwarf;
 static uint64_t
 GetGNUEHPointer(const DataExtractor &DE, lldb::offset_t *offset_ptr,
                 uint32_t eh_ptr_enc, addr_t pc_rel_addr, addr_t text_addr,
-                addr_t data_addr) //, BSDRelocs *data_relocs) const
+                addr_t data_addr,
+                uint32_t addr_size) //, BSDRelocs *data_relocs) const
 {
   if (eh_ptr_enc == DW_EH_PE_omit)
     return ULLONG_MAX; // Value isn't in the buffer...
 
   uint64_t baseAddress = 0;
   uint64_t addressValue = 0;
-  const uint32_t addr_size = DE.GetAddressByteSize();
-  assert(addr_size == 4 || addr_size == 8);
+  // 2 for a target narrower than the object file that carries it - there is no
+  // ELFCLASS16, so a 16-bit machine's addresses arrive in an ELFCLASS32 file.
+  assert(addr_size == 2 || addr_size == 4 || addr_size == 8);
 
   bool signExtendValue = false;
   // Decode the base part or adjust our offset
@@ -103,7 +105,7 @@ GetGNUEHPointer(const DataExtractor &DE, lldb::offset_t *offset_ptr,
   // Decode the value part
   switch (eh_ptr_enc & DW_EH_PE_MASK_ENCODING) {
   case DW_EH_PE_absptr: {
-    addressValue = DE.GetAddress(offset_ptr);
+    addressValue = DE.GetMaxU64(offset_ptr, addr_size);
     //          if (data_relocs)
     //              addressValue = data_relocs->Relocate(*offset_ptr -
     //              addr_size, *this, addressValue);
@@ -406,7 +408,8 @@ DWARFCallFrameInfo::ParseCIE(const dw_offset_t cie_offset) {
               const lldb::addr_t pc_rel_addr = m_section_sp->GetFileAddress();
               cie_sp->personality_loc = GetGNUEHPointer(
                   m_cfi_data, &offset, arg_ptr_encoding, pc_rel_addr,
-                  LLDB_INVALID_ADDRESS, LLDB_INVALID_ADDRESS);
+                  LLDB_INVALID_ADDRESS, LLDB_INVALID_ADDRESS,
+                  GetCIEAddressByteSize(cie_sp.get()));
             }
             break;
 
@@ -447,6 +450,13 @@ DWARFCallFrameInfo::ParseCIE(const dw_offset_t cie_offset) {
   }
 
   return cie_sp;
+}
+
+uint32_t DWARFCallFrameInfo::GetCIEAddressByteSize(const CIE *cie) const {
+  if (m_type == DWARF && cie && cie->version >= CFI_VERSION4 &&
+      cie->address_size != 0)
+    return cie->address_size;
+  return m_cfi_data.GetAddressByteSize();
 }
 
 void DWARFCallFrameInfo::GetCFIData() {
@@ -548,15 +558,16 @@ void DWARFCallFrameInfo::GetFDEIndex() {
       const lldb::addr_t text_addr = LLDB_INVALID_ADDRESS;
       const lldb::addr_t data_addr = LLDB_INVALID_ADDRESS;
 
+      const uint32_t addr_size = GetCIEAddressByteSize(cie);
       lldb::addr_t addr =
           GetGNUEHPointer(m_cfi_data, &offset, cie->ptr_encoding, pc_rel_addr,
-                          text_addr, data_addr);
+                          text_addr, data_addr, addr_size);
       if (clear_address_zeroth_bit)
         addr &= ~1ull;
 
       lldb::addr_t length = GetGNUEHPointer(
           m_cfi_data, &offset, cie->ptr_encoding & DW_EH_PE_MASK_ENCODING,
-          pc_rel_addr, text_addr, data_addr);
+          pc_rel_addr, text_addr, data_addr, addr_size);
       FDEEntryMap::Entry fde(addr, length, current_entry);
       m_fde_index.Append(fde);
     } else {
@@ -611,12 +622,13 @@ DWARFCallFrameInfo::ParseFDE(dw_offset_t dwarf_offset,
   const lldb::addr_t pc_rel_addr = m_section_sp->GetFileAddress();
   const lldb::addr_t text_addr = LLDB_INVALID_ADDRESS;
   const lldb::addr_t data_addr = LLDB_INVALID_ADDRESS;
+  const uint32_t addr_size = GetCIEAddressByteSize(cie);
   lldb::addr_t range_base =
       GetGNUEHPointer(m_cfi_data, &offset, cie->ptr_encoding, pc_rel_addr,
-                      text_addr, data_addr);
+                      text_addr, data_addr, addr_size);
   lldb::addr_t range_len = GetGNUEHPointer(
       m_cfi_data, &offset, cie->ptr_encoding & DW_EH_PE_MASK_ENCODING,
-      pc_rel_addr, text_addr, data_addr);
+      pc_rel_addr, text_addr, data_addr, addr_size);
   AddressRange range(range_base, m_objfile.GetAddressByteSize(),
                      m_objfile.GetSectionList());
   range.SetByteSize(range_len);
@@ -689,7 +701,7 @@ DWARFCallFrameInfo::ParseFDE(dw_offset_t dwarf_offset,
           // are initially identical to the current row. The new location value
           // should always be greater than the current one.
           fde.rows.push_back(row);
-          row.SetOffset(m_cfi_data.GetAddress(&offset) -
+          row.SetOffset(m_cfi_data.GetMaxU64(&offset, addr_size) -
                         startaddr.GetFileAddress());
           break;
         }

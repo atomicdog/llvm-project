@@ -152,12 +152,27 @@ static PluginProperties &GetGlobalPluginProperties() {
   return g_settings;
 }
 
+/// The address size to read a line table with is the DWARF unit's, not the one
+/// the section data inherited from the object file. Those differ whenever the
+/// container is wider than the machine: an ELF holding code for a 16-bit target
+/// is still ELFCLASS32, so the section data claims 4-byte addresses while the
+/// unit and the line-table prologue both correctly say 2. Handing the parser
+/// the container's answer trips its consistency assertion against the prologue.
+/// llvm's own DWARFContext::getLineTableForUnit takes the unit's size for the
+/// same reason.
+static void SetLineDataAddressSize(llvm::DWARFDataExtractor &data,
+                                   DWARFUnit *unit) {
+  if (unit)
+    data.setAddressSize(unit->GetAddressByteSize());
+}
+
 static const llvm::DWARFDebugLine::LineTable *
 ParseLLVMLineTable(DWARFContext &context, llvm::DWARFDebugLine &line,
-                   dw_offset_t line_offset, dw_offset_t unit_offset) {
+                   dw_offset_t line_offset, DWARFUnit *unit) {
   Log *log = GetLog(DWARFLog::DebugInfo);
 
   llvm::DWARFDataExtractor data = context.getOrLoadLineData().GetAsLLVMDWARF();
+  SetLineDataAddressSize(data, unit);
   llvm::DWARFContext &ctx = context.GetAsLLVM();
   llvm::Expected<const llvm::DWARFDebugLine::LineTable *> line_table =
       line.getOrParseLineTable(
@@ -178,10 +193,11 @@ ParseLLVMLineTable(DWARFContext &context, llvm::DWARFDebugLine &line,
 static bool ParseLLVMLineTablePrologue(DWARFContext &context,
                                        llvm::DWARFDebugLine::Prologue &prologue,
                                        dw_offset_t line_offset,
-                                       dw_offset_t unit_offset) {
+                                       DWARFUnit *unit) {
   Log *log = GetLog(DWARFLog::DebugInfo);
   bool success = true;
   llvm::DWARFDataExtractor data = context.getOrLoadLineData().GetAsLLVMDWARF();
+  SetLineDataAddressSize(data, unit);
   llvm::DWARFContext &ctx = context.GetAsLLVM();
   uint64_t offset = line_offset;
   llvm::Error error = prologue.parse(
@@ -1099,8 +1115,7 @@ bool SymbolFileDWARF::ParseSupportFiles(DWARFUnit &dwarf_cu,
 
   ElapsedTime elapsed(m_parse_time);
   llvm::DWARFDebugLine::Prologue prologue;
-  if (!ParseLLVMLineTablePrologue(m_context, prologue, offset,
-                                  dwarf_cu.GetOffset()))
+  if (!ParseLLVMLineTablePrologue(m_context, prologue, offset, &dwarf_cu))
     return false;
 
   std::string comp_dir = dwarf_cu.GetCompilationDirectory().GetPath();
@@ -1245,7 +1260,7 @@ bool SymbolFileDWARF::ParseLineTable(CompileUnit &comp_unit) {
   ElapsedTime elapsed(m_parse_time);
   llvm::DWARFDebugLine line;
   const llvm::DWARFDebugLine::LineTable *line_table =
-      ParseLLVMLineTable(m_context, line, offset, dwarf_cu->GetOffset());
+      ParseLLVMLineTable(m_context, line, offset, dwarf_cu);
 
   if (!line_table)
     return false;

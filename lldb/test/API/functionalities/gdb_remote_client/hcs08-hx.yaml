@@ -1,0 +1,204 @@
+--- !ELF
+FileHeader:
+  Class:           ELFCLASS32
+  Data:            ELFDATA2MSB
+  OSABI:           ELFOSABI_STANDALONE
+  Type:            ET_EXEC
+  Machine:         EM_68HC08
+  Entry:           0x8000
+ProgramHeaders:
+  - Type:            PT_LOAD
+    Flags:           [ PF_X, PF_R ]
+    FirstSec:        .text
+    LastSec:         .text
+    VAddr:           0x8000
+    Align:           0x1000
+    Offset:          0x1000
+  - Type:            PT_LOAD
+    Flags:           [ PF_W, PF_R ]
+    FirstSec:        .bss
+    LastSec:         .bss
+    VAddr:           0x100
+    Align:           0x1000
+    Offset:          0x1100
+  - Type:            PT_LOAD
+    Flags:           [ PF_W, PF_R ]
+    FirstSec:        .vectors
+    LastSec:         .vectors
+    VAddr:           0xFFFE
+    Align:           0x1000
+    Offset:          0x1FFE
+  - Type:            PT_GNU_STACK
+    Flags:           [ PF_W, PF_R ]
+    Align:           0x0
+    Offset:          0x0
+Sections:
+  - Name:            .text
+    Type:            SHT_PROGBITS
+    Flags:           [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address:         0x8000
+    AddressAlign:    0x4
+    Offset:          0x1000
+    Content:         45080094CD801420FE20FE20A601C70100AF0181451234960101320101CD800C960103A6A5C7010581
+  - Name:            .bss
+    Type:            SHT_NOBITS
+    Flags:           [ SHF_WRITE, SHF_ALLOC ]
+    Address:         0x100
+    AddressAlign:    0x1
+    Offset:          0x1100
+    Size:            0x6
+  - Name:            .vectors
+    Type:            SHT_PROGBITS
+    Flags:           [ SHF_WRITE, SHF_ALLOC ]
+    Address:         0xFFFE
+    AddressAlign:    0x1
+    Offset:          0x1FFE
+    Content:         '8000'
+  - Name:            .page0
+    Type:            SHT_NOBITS
+    Flags:           [ SHF_ALLOC ]
+    Address:         0x80
+    AddressAlign:    0x1
+  - Name:            .debug_info
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         000000AC000501020000000001000000008000800973746172742E73002E00636C616E672076657273696F6E2032342E302E306769742028676974406769746875622E636F6D3A61746F6D6963646F672F6C6C766D2D70726F6A6563742E67697420336137616162636433313565646634623736643662343434333636656565313032636531343137652900800102737461727400000000000000000380000268616E6700000000000000000B8007000000008D00050102000000210100001D01000000080000005302000000001D000000080000000C02000000000801540900160000007603000B0016000000760004010000001501540A001B0500000027020006030000005D001102A103070000006208040801060500000071001202A104070000007608060502060700000076001302A105060800000062001402A10600
+  - Name:            .debug_abbrev
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         01110110171101120103081B08250813050000020A0003083A063B061101000000011101252513050325721710171B25111B120673178C01170000022E01111B120640187A1903253A0B3B0B271949133F190000030500022203253A0B3B0B49130000042E01111B120640187A1903253A0B3B0B27193F1900000548007F137D1B0000063400032549133F193A0B3B0B021800000735004913000008240003253E0B0B0B000000
+  - Name:            .debug_line
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         0000004F0005020000000037010101FB0E0D00010101010000000100000101011F010000000003011F020F051E0100000002001311058AF0A95CF07EDBE8283B29F1B304000003028000193D213D02020001010000006E0005020000000037010101FB0E0D00010101010000000100000101011F010000000003011F020F051E010000000A00B1A47DDA7ADC6968378FA0CFEE63C037040005080A000302800C031601050C590503062E0508060A24051267050C063C050A063C05083D0501590201000101
+  - Name:            .debug_line_str
+    Type:            SHT_PROGBITS
+    Flags:           [ SHF_MERGE, SHF_STRINGS ]
+    AddressAlign:    0x1
+    EntSize:         0x1
+    Content:         2E0073746172742E7300687870726F62652E6300
+  - Name:            .debug_loclists
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         '00000012000502000000000100000004040007015300'
+  - Name:            .debug_str_offsets
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         00000034000500000000000B0000007E00000007000000A300000088000000960000009F00000000000000A8000000780000009B00000009
+  - Name:            .debug_frame
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x2
+    Content:         00000010FFFFFFFF04000200017F050C040285010000000800000000800C0008000000080000000080140015
+  - Type:            SectionHeaderTable
+    Sections:
+      - Name:            .page0
+      - Name:            .text
+      - Name:            .bss
+      - Name:            .vectors
+      - Name:            .debug_info
+      - Name:            .debug_abbrev
+      - Name:            .debug_aranges
+      - Name:            .debug_line
+      - Name:            .debug_line_str
+      - Name:            .debug_loclists
+      - Name:            .debug_str_offsets
+      - Name:            .debug_str
+      - Name:            .debug_addr
+      - Name:            .debug_frame
+      - Name:            .symtab
+      - Name:            .shstrtab
+      - Name:            .strtab
+Symbols:
+  - Name:            hang
+    Section:         .text
+    Value:           0x8007
+  - Name:            hxprobe.c
+    Type:            STT_FILE
+    Index:           SHN_ABS
+  - Name:            _start
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x8000
+  - Name:            run
+    Type:            STT_FUNC
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x8014
+    Size:            0x15
+  - Name:            scale
+    Type:            STT_FUNC
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x800C
+    Size:            0x8
+  - Name:            port
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x100
+    Size:            0x1
+  - Name:            seed
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x101
+    Size:            0x2
+  - Name:            result
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x103
+    Size:            0x2
+  - Name:            done
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x105
+    Size:            0x1
+  - Name:            HCS08_DP_BANK_SIZE
+    Index:           SHN_ABS
+    Binding:         STB_GLOBAL
+    Value:           0x8
+  - Name:            __page0_end
+    Section:         .page0
+    Binding:         STB_GLOBAL
+    Value:           0x80
+  - Name:            __hcs08_dp_bank
+    Index:           SHN_ABS
+    Binding:         STB_GLOBAL
+    Value:           0xF8
+DWARF:
+  debug_str:
+    - result
+    - .
+    - v
+    - 'clang version 24.0.0git (git@github.com:atomicdog/llvm-project.git 3a7aabcd315edf4b76d6b444366eee102ce1417e)'
+    - scale
+    - hxprobe.c
+    - unsigned char
+    - seed
+    - run
+    - int
+    - port
+    - done
+  debug_aranges:
+    - Length:          0x10
+      Version:         2
+      CuOffset:        0x0
+      AddressSize:     0x2
+      Descriptors:
+        - Address:         0x8000
+          Length:          0x9
+  debug_addr:
+    - Length:          0x12
+      Version:         0x5
+      AddressSize:     0x2
+      Entries:
+        - Address:         0x800C
+        - Address:         0x8014
+        - Address:         0x8020
+        - Address:         0x100
+        - Address:         0x101
+        - Address:         0x103
+        - Address:         0x105
+...

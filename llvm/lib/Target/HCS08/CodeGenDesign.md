@@ -751,6 +751,71 @@ carry two implementations, and the one chosen without it converts through
 mantissa and return a wrong answer. The define is set by the clang target and
 those two routines are the reason.
 
+## 23. Debug info
+
+`-g` used to abort the compiler. `SupportsDebugInformation` was set from the
+start, but nothing behind it was: three separate things were missing, and each
+hid the next.
+
+**A 32-bit relocation.** The relocation set stopped at 16 bits, which is every
+width this machine can address. 32-bit DWARF refers between its own sections
+with four-byte offsets whatever the target's pointer size, so `FK_Data_4` fell
+through to the ELF writer's `llvm_unreachable` and `-g` died there.
+`R_HCS08_32` is deliberately not range-checked against the 16-bit address space
+the other relocations are - it is not an address. Three places had to learn it:
+the object writer, lld, and `RelocationResolver.cpp`, which is what lets
+`llvm-dwarfdump` read an unlinked `.o` (without it every string came back
+empty and the DWARF looked malformed).
+
+**DWARF register numbers.** The target defined none. There is no published
+psABI for this family and so no published DWARF numbering either, which makes
+this ours to define, exactly as the relocation set is:
+
+    0  A      1  H       2  X       3  H:X
+    4  SP     5  PC      6  NZV     7  C
+
+`H:X` gets a number as well as its halves because it is the only allocatable
+16-bit register, so it is where a pointer or an `int` actually lives. Without
+these, a variable's location came out as a bare `DW_OP_plus_uconst` with
+nothing to be relative to, and no subprogram had a `DW_AT_frame_base` at all.
+
+**The frame reference was off by one.** This is the one that would have been
+lived with. `getFrameIndexReference` is what debug info asks where a local
+sits, and the inherited default answers object offset plus frame size -
+while `eliminateFrameIndex`, which is what the *code* uses, adds one more,
+because SP points one byte below the last thing pushed so the lowest byte of
+the frame is `1,sp`. Every local was therefore described one byte low. That
+does not fail: a debugger reads the high half of one variable joined to the low
+half of its neighbour and prints a plausible wrong number. The override exists
+to keep the two formulas identical and says so.
+
+**What works now**: line tables with `is_stmt` and `prologue_end`, so an
+address maps to a source line - which is the immediately useful thing, since a
+BDM probe reports PC on halt. Variable locations resolve to real frame slots.
+`llvm-dwarfdump --verify` is clean on both the object and the linked image.
+
+`dbgtest.py` in the harness is the test that matters: it reads out of the DWARF
+where `local` is supposed to be, halts there on the simulator, and checks the
+value is actually at that address. `--verify` only says the DWARF is well
+formed; this says it is true.
+
+**Not done**: no CFI, so no `.debug_frame` and no backtrace past the current
+frame. Nothing emits `.cfi_*` directives and the prologue does not describe SP
+motion, so a debugger can see where it is and what the locals are but not who
+called it.
+
+### A use-after-free the debug work uncovered
+
+`-g` also made every mnemonic in a hand-written `.s` file fail to match -
+`ldhx`, `txs`, `rts` alike, operands or not. That was not a debug bug.
+`parseInstruction` lower-cased the mnemonic into a local `std::string` and
+handed a `StringRef` to it to `HCS08Operand`, which does not own it; the
+matcher does not run until `matchAndEmitInstruction`, after that local has
+died. It read freed stack that usually still held the right bytes, and `-g`
+does enough work in between to disturb them. It is `MCContext::allocateString`
+now, whose storage lasts as long as the parse. Every `.s` file the assembler
+has ever handled was relying on luck.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

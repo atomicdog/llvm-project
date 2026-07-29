@@ -30,6 +30,10 @@ public:
                                 MachineBasicBlock::iterator I) const override;
 
   bool hasReservedCallFrame(const MachineFunction &MF) const override;
+
+  /// Where a frame object sits relative to SP, for debug info.
+  StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
+                                     Register &FrameReg) const override;
 };
 
 } // namespace llvm

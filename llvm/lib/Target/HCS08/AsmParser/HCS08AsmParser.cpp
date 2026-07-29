@@ -305,8 +305,16 @@ bool HCS08AsmParser::parseInstruction(ParseInstructionInfo &Info,
                                        StringRef Name, SMLoc NameLoc,
                                        OperandVector &Operands) {
   // Mnemonics are spelled in lower case in the asm strings.
-  std::string Lower = Name.lower();
-  StringRef Mnemonic(Lower);
+  //
+  // The lowered copy has to outlive this function. HCS08Operand holds the
+  // token as a StringRef and does not own it, and the matcher does not run
+  // until matchAndEmitInstruction, which is called after this returns - so a
+  // local std::string here leaves every mnemonic pointing at freed stack. That
+  // read the right bytes often enough to look correct, and -g was enough extra
+  // work between the two to stop it: every mnemonic in the file, operands or
+  // not, became "invalid instruction mnemonic". The context's allocator lives
+  // as long as the parse does.
+  StringRef Mnemonic = getContext().allocateString(Name.lower());
 
   bool IsBitOp = StringSwitch<bool>(Mnemonic)
                      .Cases({"bset", "bclr", "brset", "brclr"}, true)

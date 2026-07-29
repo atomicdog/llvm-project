@@ -181,3 +181,23 @@ MachineBasicBlock::iterator HCS08FrameLowering::eliminateCallFramePseudoInstr(
 bool HCS08FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const {
   return true;
 }
+
+StackOffset
+HCS08FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
+                                           Register &FrameReg) const {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  FrameReg = HCS08::SP;
+
+  // The same rebasing HCS08RegisterInfo::eliminateFrameIndex does, and it has
+  // to stay the same: this is what debug info reports as a variable's address,
+  // and eliminateFrameIndex is what the code actually uses.
+  //
+  // The +1 is the whole point. SP points one byte *below* the last thing
+  // pushed, so the lowest byte of the frame is 1,sp. Inheriting the default,
+  // which stops at object offset plus frame size, describes every local one
+  // byte low - a debugger then reads the high half of one variable and the low
+  // half of its neighbour, and prints a plausible wrong number rather than
+  // failing.
+  return StackOffset::getFixed(MFI.getObjectOffset(FI) +
+                               (int64_t)MFI.getStackSize() + 1);
+}

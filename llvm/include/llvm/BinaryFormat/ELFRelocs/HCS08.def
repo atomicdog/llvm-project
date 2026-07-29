@@ -20,3 +20,8 @@ ELF_RELOC(R_HCS08_PCREL_8,            3)
 // byte at a time through the 8-bit accumulator.
 ELF_RELOC(R_HCS08_HI8,                4)
 ELF_RELOC(R_HCS08_LO8,                5)
+// 32-bit absolute, big endian. No address on this machine is this wide: this
+// exists for the debug sections, where the inter-section offsets of 32-bit
+// DWARF are four bytes regardless of how small the target's pointers are. It
+// is also what a .long directive produces.
+ELF_RELOC(R_HCS08_32,                 6)

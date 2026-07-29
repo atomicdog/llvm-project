@@ -75,6 +75,13 @@ void HCS08::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
     write16be(loc, val);
     break;
 
+  // Not an address - nothing on this machine is 32 bits wide. This is what the
+  // debug sections refer between themselves with, so it is deliberately not
+  // range-checked against the 16-bit address space the rest of these are.
+  case R_HCS08_32:
+    write32be(loc, val);
+    break;
+
   case R_HCS08_PCREL_8: {
     // A branch displacement is measured from the end of the instruction, and
     // the relocated byte is the last one, so the base is one past it.

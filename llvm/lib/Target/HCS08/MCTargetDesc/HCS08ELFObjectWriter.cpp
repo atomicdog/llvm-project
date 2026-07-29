@@ -33,6 +33,12 @@ protected:
       return ELF::R_HCS08_8;
     case FK_Data_2:
       return ELF::R_HCS08_16;
+    // Nothing addressable is this wide. It is what the debug sections need:
+    // 32-bit DWARF refers between its sections with four-byte offsets whatever
+    // the target's pointer size, so -g produces these even though a pointer
+    // here is two bytes.
+    case FK_Data_4:
+      return ELF::R_HCS08_32;
     case HCS08::fixup_8:
       return ELF::R_HCS08_8;
     case HCS08::fixup_16:

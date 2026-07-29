@@ -159,6 +159,7 @@ static bool supportsHCS08(uint64_t Type) {
   switch (Type) {
   case ELF::R_HCS08_8:
   case ELF::R_HCS08_16:
+  case ELF::R_HCS08_32:
   case ELF::R_HCS08_HI8:
   case ELF::R_HCS08_LO8:
     return true;
@@ -175,6 +176,11 @@ static uint64_t resolveHCS08(uint64_t Type, uint64_t Offset, uint64_t S,
     return (S + Addend) & 0xFF;
   case ELF::R_HCS08_16:
     return (S + Addend) & 0xFFFF;
+  // Wider than anything addressable here; it is the debug sections referring
+  // between themselves, which 32-bit DWARF does in four bytes whatever the
+  // target's pointer size.
+  case ELF::R_HCS08_32:
+    return (S + Addend) & 0xFFFFFFFF;
   case ELF::R_HCS08_HI8:
     return ((S + Addend) >> 8) & 0xFF;
   default:

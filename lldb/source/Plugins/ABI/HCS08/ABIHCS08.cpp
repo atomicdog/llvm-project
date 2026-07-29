@@ -228,14 +228,31 @@ static UnwindPlan::Row MakeHCS08EntryRow() {
   return row;
 }
 
-// called when we are on the first instruction of a new function
-UnwindPlanSP ABIHCS08::CreateFunctionEntryUnwindPlan() {
-  auto plan_sp = std::make_shared<UnwindPlan>(eRegisterKindDWARF);
-  plan_sp->AppendRow(MakeHCS08EntryRow());
-  plan_sp->SetSourceName("hcs08 at-func-entry default");
-  plan_sp->SetSourcedFromCompiler(eLazyBoolNo);
-  return plan_sp;
-}
+/// Deliberately none.
+///
+/// LLDB asks for this when the PC is on the very first instruction of a
+/// function, and prefers it over the function's own CFI, because unwind info
+/// derived from a prologue that has not run yet is not to be trusted. That
+/// reasoning does not apply here, and the guess it prefers is wrong for a whole
+/// class of functions.
+///
+/// An architectural answer has to assume every function was entered by `jsr`,
+/// which pushed two bytes: CFA = SP+2. An interrupt handler was not. The
+/// hardware stacks five bytes before the first instruction of a handler runs,
+/// so the CFA is SP+5 there, and nothing about the function's *address* says
+/// which kind it is - only its CFI does. Halting on a handler's first
+/// instruction is not an exotic case either; it is what setting a breakpoint by
+/// the handler's name does.
+///
+/// Returning nothing makes LLDB fall through to the DWARF, which is right for
+/// both kinds. That is safe here in a way it would not be everywhere, because
+/// this target's CFI is asynchronous by construction: the frame lowering
+/// restates the offset at every instruction that moves SP, precisely so that a
+/// BDM probe halting wherever it happens to halt is describable
+/// (CodeGenDesign.md §24). A function with no CFI at all is unaffected -- LLDB
+/// then falls through again to CreateDefaultUnwindPlan below, whose rule is the
+/// CFA = SP+2 this would have returned anyway.
+UnwindPlanSP ABIHCS08::CreateFunctionEntryUnwindPlan() { return nullptr; }
 
 UnwindPlanSP ABIHCS08::CreateDefaultUnwindPlan() {
   // There is no frame pointer to fall back on - the backend addresses locals

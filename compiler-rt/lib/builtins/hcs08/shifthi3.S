@@ -31,14 +31,33 @@
 
         .text
 
+// CFI goes to .debug_frame, which has to be asked for. A compiled function
+// gets that from the AsmPrinter, which emits .cfi_sections for it; hand-written
+// assembly defaults to .eh_frame instead, and .eh_frame is SHF_ALLOC - it would
+// be linked into the image and spend flash on a target that has no unwinder to
+// read it. .debug_frame is not loaded, so this costs the part nothing.
+        .cfi_sections .debug_frame
+
 // Frame: 1,sp = the high byte, 2,sp = the low byte, so the return address is
 // at 3,sp. Big endian, and sthx stores H first, so the halves land that way
 // round without any rearranging.
+//
+// The .cfi_ directives are what let a debugger unwind out of these. A compiled
+// function gets them from the frame lowering; hand-written assembly has to say
+// it itself, and without them no FDE is emitted at all, so a backtrace that
+// halts in here cannot find its caller. That is not a remote possibility for
+// this file in particular: a variable shift is called from every soft-float
+// routine, so it is one of the likeliest places on the target to stop.
+//
+// The CIE says the CFA is SP+2 on entry (section 24), and each ais moves SP
+// without moving the CFA, so each one is followed by the new distance.
 
         .globl  __ashlhi3
         .type   __ashlhi3,@function
 __ashlhi3:
+        .cfi_startproc
         ais     #-2
+        .cfi_def_cfa_offset 4
         sthx    $01,sp
         tsta
         beq     .Lashl_done
@@ -49,14 +68,18 @@ __ashlhi3:
 .Lashl_done:
         ldhx    $01,sp
         ais     #2
+        .cfi_def_cfa_offset 2
         rts
+        .cfi_endproc
 .Lfunc_end0:
         .size   __ashlhi3, .Lfunc_end0-__ashlhi3
 
         .globl  __lshrhi3
         .type   __lshrhi3,@function
 __lshrhi3:
+        .cfi_startproc
         ais     #-2
+        .cfi_def_cfa_offset 4
         sthx    $01,sp
         tsta
         beq     .Llshr_done
@@ -67,14 +90,18 @@ __lshrhi3:
 .Llshr_done:
         ldhx    $01,sp
         ais     #2
+        .cfi_def_cfa_offset 2
         rts
+        .cfi_endproc
 .Lfunc_end1:
         .size   __lshrhi3, .Lfunc_end1-__lshrhi3
 
         .globl  __ashrhi3
         .type   __ashrhi3,@function
 __ashrhi3:
+        .cfi_startproc
         ais     #-2
+        .cfi_def_cfa_offset 4
         sthx    $01,sp
         tsta
         beq     .Lashr_done
@@ -85,6 +112,8 @@ __ashrhi3:
 .Lashr_done:
         ldhx    $01,sp
         ais     #2
+        .cfi_def_cfa_offset 2
         rts
+        .cfi_endproc
 .Lfunc_end2:
         .size   __ashrhi3, .Lfunc_end2-__ashrhi3

@@ -19,10 +19,20 @@ there is no libc and nothing that can link an executable to probe with:
       -DCOMPILER_RT_OS_DIR=hcs08 \
       -DCMAKE_INSTALL_PREFIX=$(<build>/bin/clang -print-resource-dir) \
       -DLLVM_CONFIG_PATH=<build>/bin/llvm-config \
-      -DCMAKE_C_FLAGS="-Os -ffreestanding"
+      -DCMAKE_C_FLAGS="-Os -ffreestanding -fforce-dwarf-frame"
     ninja -C build-rt-hcs08 install
 
-Four of those are load-bearing:
+Five of those are load-bearing:
+
+- `-fforce-dwarf-frame`, without which **the archive carries no unwind
+  information at all** and a backtrace that halts anywhere inside it cannot
+  find its caller. That is not a remote corner: a variable shift is called from
+  every soft-float routine, so these are among the likeliest addresses on the
+  target to stop at. CFI only reaches `.debug_frame` when there is debug info
+  or this flag, and the flag is the cheap half of the pair - it emits the frame
+  description and nothing else, no `.debug_info`, and `.debug_frame` is not an
+  allocated section so the image does not grow. The three `.S` files carry
+  their own `.cfi_` directives and do not depend on it.
 
 - `CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`, because CMake's usual
   compiler check links an executable and there is nothing to link against.

@@ -19,13 +19,27 @@
 //===----------------------------------------------------------------------===//
 
         .text
+
+// CFI goes to .debug_frame, which has to be asked for. A compiled function
+// gets that from the AsmPrinter, which emits .cfi_sections for it; hand-written
+// assembly defaults to .eh_frame instead, and .eh_frame is SHF_ALLOC - it would
+// be linked into the image and spend flash on a target that has no unwinder to
+// read it. .debug_frame is not loaded, so this costs the part nothing.
+        .cfi_sections .debug_frame
         .globl  __mulhi3
         .type   __mulhi3,@function
 
 // Frame: 1,sp = ah   2,sp = al   3,sp = result high   4,sp = result low
 // so the return address is at 5,sp and b at 7,sp / 8,sp.
+//
+// The .cfi_ directives are what let a debugger unwind out of here; without
+// them no FDE is emitted and a backtrace halting inside cannot find its
+// caller. The CIE says the CFA is SP+2 on entry (section 24), and ais moves SP
+// without moving the CFA, so each one is followed by the new distance.
 __mulhi3:
+        .cfi_startproc
         ais     #-4
+        .cfi_def_cfa_offset 6
         sthx    $01,sp                  ; split a into its two bytes
 
         lda     $02,sp                  ; al
@@ -48,6 +62,8 @@ __mulhi3:
 
         ldhx    $03,sp
         ais     #4
+        .cfi_def_cfa_offset 2
         rts
+        .cfi_endproc
 .Lfunc_end0:
         .size   __mulhi3, .Lfunc_end0-__mulhi3

@@ -23,12 +23,26 @@
 
         .text
 
+// CFI goes to .debug_frame, which has to be asked for. A compiled function
+// gets that from the AsmPrinter, which emits .cfi_sections for it; hand-written
+// assembly defaults to .eh_frame instead, and .eh_frame is SHF_ALLOC - it would
+// be linked into the image and spend flash on a target that has no unwinder to
+// read it. .debug_frame is not loaded, so this costs the part nothing.
+        .cfi_sections .debug_frame
+
 // Frame: 1,sp/2,sp = dividend, becoming the quotient
 //        3,sp/4,sp = remainder
 //        5,sp      = iteration count
 // so the return address is at 6,sp and b at 8,sp / 9,sp.
+// The .cfi_def_cfa_offset lives in the macro because the ais it describes
+// does. Both users wrap the expansion in their own .cfi_startproc, so it lands
+// inside a frame description either way. Without one no FDE is emitted for
+// these at all and a backtrace halting in here cannot find its caller; the CIE
+// says the CFA is SP+2 on entry (section 24), and ais moves SP without moving
+// the CFA.
 .macro  udivmodhi4_body
         ais     #-5
+        .cfi_def_cfa_offset 7
         sthx    $01,sp
         clra
         sta     $03,sp
@@ -63,19 +77,25 @@
         .globl  __udivhi3
         .type   __udivhi3,@function
 __udivhi3:
+        .cfi_startproc
         udivmodhi4_body
         ldhx    $01,sp
         ais     #5
+        .cfi_def_cfa_offset 2
         rts
+        .cfi_endproc
 .Lend_udiv:
         .size   __udivhi3, .Lend_udiv-__udivhi3
 
         .globl  __umodhi3
         .type   __umodhi3,@function
 __umodhi3:
+        .cfi_startproc
         udivmodhi4_body
         ldhx    $03,sp
         ais     #5
+        .cfi_def_cfa_offset 2
         rts
+        .cfi_endproc
 .Lend_umod:
         .size   __umodhi3, .Lend_umod-__umodhi3

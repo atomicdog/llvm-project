@@ -1016,6 +1016,45 @@ declared and none were registered, so `-run-pass` and `-stop-before` could not
 reach them and the only way to exercise one was to compile a whole function and
 read the assembly.
 
+## 26. The runtime library could not be unwound
+
+§24 gave every compiled function a frame description. The archive is a
+separate cross-build and got none: **zero FDEs across all 39 objects**,
+assembly and C alike. A halt anywhere inside compiler-rt could say where it was
+and nothing about who called it, and that is not a remote address to stop at -
+a variable shift is called from every soft-float routine (§18), which makes
+`__ashlhi3` and its siblings some of the busiest code on the target.
+
+Two independent causes, needing two different fixes.
+
+**The C sources had no debug info, so their CFI had nowhere to go.** CFI only
+reaches `.debug_frame` when `hasDebugInfo() || ForceDwarfFrameSection`, and the
+archive is built `-Os` with neither. `-fforce-dwarf-frame` is the cheap half of
+that pair: it emits the frame description and nothing else - no `.debug_info`,
+no line tables - and `.debug_frame` is not `SHF_ALLOC`, so the image does not
+grow by a byte. It is in the recipe in `hcs08/README.md` now.
+
+**The three hand-written `.S` files emit no FDE at all**, with or without that
+flag, because an FDE comes from `.cfi_startproc`. All three move SP, so the
+CIE's rule was wrong inside them from the first instruction. They carry their
+own `.cfi_` directives now, one `.cfi_def_cfa_offset` per `ais`, which is
+exactly what the frame lowering does for compiled code.
+
+One thing to know before writing any more assembly here: **hand-written CFI
+defaults to `.eh_frame`, and that is the wrong section on this target.** The
+AsmPrinter emits `.cfi_sections .debug_frame` for compiled code; an `.s` file
+has to say it itself, and `.eh_frame` is `SHF_ALLOC` - it would be linked into
+the image and spend flash on unwind tables for an unwinder that does not exist.
+The three files say it. Adding a fourth means saying it again.
+
+47 FDEs across the archive now, no `.eh_frame` anywhere, and `libcfitest.py`
+is the test that matters: it halts inside `__ashlhi3` and walks out through
+`shifter` and `outer` to `run`, crossing from hand-written assembly into
+compiled frames. `cfilib.c` makes the shift amount `volatile` on purpose -
+otherwise the shift folds at compile time, no call is emitted, and the test
+passes while exercising nothing, which is the constant-folding trap the harness
+README has warned about since the integer routines.
+
 ## Bottom line
 
 Phase 0 -> 1 on Model A gets a *correct* compiler quickly. Model B as §2

@@ -34,7 +34,15 @@ HCS08MCAsmInfo::HCS08MCAsmInfo(const Triple &TT,
                                  const MCTargetOptions &Options)
     : MCAsmInfoELF(Options) {
   CodePointerSize = 2;
-  CalleeSaveStackSlotSize = 2;
+
+  // One, and this is not a rounding of the 16-bit pointer down. It is the
+  // DWARF data alignment factor - the unit .cfi_offset displacements are
+  // counted in - and it is the only thing this field feeds. Every push on this
+  // machine is one byte wide (pshh, psha, pshx; there is no 16-bit push), the
+  // stack is byte-aligned, and an interrupt frame is an odd five bytes, so a
+  // factor of 2 would leave half the saved registers unable to use the compact
+  // DW_CFA_offset form and describe none of them more accurately.
+  CalleeSaveStackSlotSize = 1;
 
   IsLittleEndian = false;
 
@@ -48,5 +56,13 @@ HCS08MCAsmInfo::HCS08MCAsmInfo(const Triple &TT,
   UsesELFSectionDirectiveForBSS = true;
 
   SupportsDebugInformation = true;
+
+  // There is no unwinder here and nothing to throw with, so exceptions stay
+  // off - but the two questions are separate, and this is the pair of settings
+  // that asks for CFI in .debug_frame without .eh_frame coming with it. A
+  // debugger needs the same frame description an unwinder would to walk out of
+  // the function it halted in, and .debug_frame is not an allocated section,
+  // so describing every instruction boundary costs nothing in a 32KB part.
   ExceptionsType = ExceptionHandling::None;
+  UsesCFIWithoutEH = true;
 }

@@ -32,6 +32,14 @@ HCS08TargetMachine::HCS08TargetMachine(
       TLOF(std::make_unique<TargetLoweringObjectFileELF>()),
       Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
+
+  // Both the prologue and the epilogue describe themselves to .debug_frame, so
+  // a block laid out after an epilogue but reached with the frame still up
+  // would inherit the epilogue's rules and be wrong for its whole length. That
+  // is any function with an early return, not a corner case. The pass inserts
+  // the .cfi_remember_state/.cfi_restore_state pair that fixes it, and only
+  // runs when something asked for frame moves in the first place.
+  setCFIFixup(true);
 }
 
 HCS08TargetMachine::~HCS08TargetMachine() = default;

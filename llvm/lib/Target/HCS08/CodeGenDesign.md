@@ -799,10 +799,7 @@ where `local` is supposed to be, halts there on the simulator, and checks the
 value is actually at that address. `--verify` only says the DWARF is well
 formed; this says it is true.
 
-**Not done**: no CFI, so no `.debug_frame` and no backtrace past the current
-frame. Nothing emits `.cfi_*` directives and the prologue does not describe SP
-motion, so a debugger can see where it is and what the locals are but not who
-called it.
+CFI came next and is §24.
 
 ### A use-after-free the debug work uncovered
 
@@ -815,6 +812,125 @@ died. It read freed stack that usually still held the right bytes, and `-g`
 does enough work in between to disturb them. It is `MCContext::allocateString`
 now, whose storage lasts as long as the parse. Every `.s` file the assembler
 has ever handled was relying on luck.
+
+## 24. CFI, and where to put the CFA
+
+§23 left a debugger able to say where it was and what the locals were, but not
+who called it. CFI closes that: `.debug_frame` now describes every instruction
+boundary in every function.
+
+### The CFA is the caller's SP, and that decision is the whole section
+
+Everything else follows from where the CFA is put, and this machine makes the
+choice sharper than most, because **SP points one byte *below* the last thing
+pushed**. Two definitions are available:
+
+- **The caller's lowest occupied byte** - the byte its own `1,sp` named. Reads
+  beautifully: the return address lands at `CFA-2`, the first incoming stack
+  argument at `CFA+0`, and it lines up with the `+1` in `getFrameIndexReference`.
+- **The caller's SP at the call site**, which is what DWARF itself calls the
+  typical definition. Reads slightly oddly here, as below.
+
+The first is wrong, and it is worth being precise about why, because it is
+wrong for a reason that no test of a single frame would ever show. An unwinder
+walks by evaluating the *caller's* rule, and that rule is written against SP -
+so it must first recover the caller's SP. Nothing in the FDE tells it how:
+libunwind assigns the CFA to SP unconditionally
+(`DwarfInstructions.hpp`, `newRegisters.setSP(cfa)`), and gdb's ports default
+the SP rule to the CFA. Under the first definition the caller's SP is `CFA-1`,
+which would need an explicit `DW_CFA_val_offset` that neither consumer consults
+- and ignoring it walks every parent frame off by one, **silently and
+cumulatively**. One frame would look right. Three would not.
+
+So the CFA is the caller's SP, and the oddity is absorbed on the other side:
+
+    DW_CFA_def_cfa: SP +2
+    DW_CFA_offset:  PC -1
+
+**The return address straddles the CFA rather than sitting below it.** `jsr`
+stores PCL at the CFA itself and PCH one below, so the two bytes read
+high-first begin at `CFA-1`. That is not a mistake to be tidied up later; it is
+the direct consequence of SP pointing below the stack top, and the `-2` that
+the same reasoning gives on every ordinary machine would be the error here.
+
+### What each kind of function says
+
+An ordinary function only moves SP, so it only restates the offset - once per
+`ais`, not once per prologue. A frame over 127 bytes takes several `ais`, and
+describing each keeps the rule true at every boundary, which is the entire
+point when a BDM probe halts wherever it halts.
+
+An interrupt handler is entered with five bytes already pushed where a `jsr`
+pushes two, so it restates the distance and describes what the hardware
+stacked. Counting back, the byte pushed when the distance became `N` sits at
+`CFA-(N-1)`:
+
+    CFA-0  PCL          CFA-3  A
+    CFA-1  PCH          CFA-4  condition codes
+    CFA-2  X            CFA-5  H, from the handler's own pshh
+
+**These offsets are measured, not read off the manual.** `frameprobe.py` builds
+`swiframe.s`, which `tsx`es inside the handler and reads its own stacked frame
+back. This is the same discipline §20 used for "H is not stacked": a push order
+is exactly the kind of claim that reads correctly and is backwards.
+
+Two things have no rule and should not have one. The **condition codes** at
+`CFA-4`, because LLVM models the CCR as the two halves `NZV` and `C` (§6) and
+neither names the whole register - and nothing unwinds through the flags. And
+the **direct-page bank bytes** a non-leaf handler pushes, because they are
+memory rather than a register and DWARF has no way to say a memory location was
+saved; only the CFA moves for them. Putting them back is the epilogue's job and
+no unwinder's.
+
+### The epilogue is described too, and that forces one more thing
+
+Most targets skip epilogue CFI. Here it is worth having - `.debug_frame` is not
+an allocated section, so accuracy costs nothing on a 32KB part, and halting at
+an arbitrary PC is the reason this target has debug info at all.
+
+But describing epilogues creates a problem that prologue-only CFI does not
+have. A function with an early return has **two** epilogues, and the block laid
+out after the first would inherit its rules while the frame is still up - wrong
+for that block's whole length, not for an instruction or two. That is what
+`setCFIFixup(true)` is for: the generic pass brackets the range with
+`.cfi_remember_state`/`.cfi_restore_state`. `resetCFIToInitialState` is
+implemented alongside it; the pass only calls it for a block reachable without
+the prologue, which does not arise while PEI puts the prologue in the entry
+block, but the default is a silent no-op and a wrong answer if it ever does.
+
+### Settings that are load-bearing
+
+- `UsesCFIWithoutEH = true` with `ExceptionsType = None`. These are separate
+  questions: there is no unwinder here and nothing to throw with, but a
+  debugger needs the same description an unwinder would. The pair is what asks
+  for `.debug_frame` without `.eh_frame` coming with it. Without `-g` nothing
+  is emitted at all - no directives, no sections.
+- `CalleeSaveStackSlotSize = 1`, which despite its name feeds exactly one
+  thing: the DWARF **data alignment factor**. Every push here is one byte
+  (`pshh`, `psha`, `pshx`; there is no 16-bit push), the stack is byte-aligned,
+  and the interrupt frame is an odd five bytes - so the old `2` would have left
+  half the saved registers unable to use the compact `DW_CFA_offset` form and
+  described none of them better.
+- DWARF register numbers, from §23, are what the rules are written in terms of;
+  the RA column is `PC`, which is 5.
+
+### The test that matters
+
+`cfitest.py` halts three frames deep and unwinds using nothing but
+`.debug_frame`: read the row for the PC, compute `CFA = SP + offset`, take the
+return address from `CFA-1`, step with `SP = CFA`, repeat. Each address has to
+land inside the function that is really there.
+
+Three frames, not two, and deliberately: **one frame can come out right from a
+wrong rule that happens to cancel, and the off-by-one above is exactly such a
+rule.** `middle` carries an array so it has a frame of its own, so a wrong
+frame size lands the second step somewhere else. `--verify` cannot catch any of
+this - it only says the DWARF is well formed - and reading the unwind rows back
+only proves they are self-consistent.
+
+**Not done**: nothing describes a frame that is only partly built if a signal
+or interrupt lands mid-prologue on the *first* instruction; and there is still
+no `.eh_frame`, which is correct, since there is no unwinder to read it.
 
 ## Bottom line
 

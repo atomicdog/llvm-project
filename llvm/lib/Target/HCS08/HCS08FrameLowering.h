@@ -34,6 +34,10 @@ public:
   /// Where a frame object sits relative to SP, for debug info.
   StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
                                      Register &FrameReg) const override;
+
+  /// Restate the unwind rules that held on entry, for a block the CFI fixup
+  /// pass finds reachable without the frame being up.
+  void resetCFIToInitialState(MachineBasicBlock &MBB) const override;
 };
 
 } // namespace llvm

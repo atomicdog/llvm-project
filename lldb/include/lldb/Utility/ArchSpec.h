@@ -238,6 +238,8 @@ public:
 
     eCore_avr,
 
+    eCore_hcs08,
+
     eCore_wasm32,
 
     eCore_amd_gpu_r600_R600,

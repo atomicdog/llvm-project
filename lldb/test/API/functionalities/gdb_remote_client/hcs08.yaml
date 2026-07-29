@@ -1,0 +1,201 @@
+--- !ELF
+FileHeader:
+  Class:           ELFCLASS32
+  Data:            ELFDATA2MSB
+  OSABI:           ELFOSABI_STANDALONE
+  Type:            ET_EXEC
+  Machine:         EM_68HC08
+  Entry:           0x8000
+ProgramHeaders:
+  - Type:            PT_LOAD
+    Flags:           [ PF_X, PF_R ]
+    FirstSec:        .text
+    LastSec:         .text
+    VAddr:           0x8000
+    Align:           0x1000
+    Offset:          0x1000
+  - Type:            PT_LOAD
+    Flags:           [ PF_W, PF_R ]
+    FirstSec:        .bss
+    LastSec:         .bss
+    VAddr:           0x100
+    Align:           0x1000
+    Offset:          0x1100
+  - Type:            PT_LOAD
+    Flags:           [ PF_W, PF_R ]
+    FirstSec:        .vectors
+    LastSec:         .vectors
+    VAddr:           0xFFFE
+    Align:           0x1000
+    Offset:          0x1FFE
+  - Type:            PT_GNU_STACK
+    Flags:           [ PF_W, PF_R ]
+    Align:           0x0
+    Offset:          0x0
+Sections:
+  - Name:            .text
+    Type:            SHT_PROGBITS
+    Flags:           [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address:         0x8000
+    AddressAlign:    0x4
+    Offset:          0x1000
+    Content:         45080094CD808C20FE20FE20A7F89EFF079EFE079EFF039EFF0195E603EB01E703E602E900E7029EFE039EFF059EE606C701009EFE05A70881A7EE9EFF119EFE119EFF099EFE11AF019EFF0B9EFE11AF029EFF0D9EFE11AF039EFF0F9EFE09AF01CD800C9EFF019EFE0F9EFF039EFE019EFF079EFE039EFF0595E607EB05E707E606E904E7069EFE07A71281450014CD8039960101A6A5C7010381
+  - Name:            .bss
+    Type:            SHT_NOBITS
+    Flags:           [ SHF_WRITE, SHF_ALLOC ]
+    Address:         0x100
+    AddressAlign:    0x1
+    Offset:          0x1100
+    Size:            0x4
+  - Name:            .vectors
+    Type:            SHT_PROGBITS
+    Flags:           [ SHF_WRITE, SHF_ALLOC ]
+    Address:         0xFFFE
+    AddressAlign:    0x1
+    Offset:          0x1FFE
+    Content:         '8000'
+  - Name:            .page0
+    Type:            SHT_NOBITS
+    Flags:           [ SHF_ALLOC ]
+    Address:         0x80
+    AddressAlign:    0x1
+  - Name:            .debug_info
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         000000AC000501020000000001000000008000800973746172742E73002E00636C616E672076657273696F6E2032342E302E306769742028676974406769746875622E636F6D3A61746F6D6963646F672F6C6C766D2D70726F6A6563742E67697420336137616162636433313565646634623736643662343434333636656565313032636531343137652900800102737461727400000000000000000380000268616E6700000000000000000B800700000000B500050102000000210100001D01000000080000005302000000008F000000080203080103000000002D015408001900000099040291070B001900000099050291050C001A0000009900030100000053015409001F00000099040291110B001F00000099050291090D0020000000A80006020000000F01540A0028070400000089001302A1030800000023070500000099001402A10402060502070700000023001502A10509000000990A000000B404000B0E080700
+  - Name:            .debug_abbrev
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         01110110171101120103081B08250813050000020A0003083A063B061101000000011101252513050325721710171B25111B12067317000002240003253E0B0B0B0000032E01111B1206401803253A0B3B0B271949133F190000040500021803253A0B3B0B49130000053400021803253A0B3B0B49130000062E00111B1206401803253A0B3B0B27193F190000073400032549133F193A0B3B0B0218000008350049130000090101491300000A21004913370B00000B240003250B0B3E0B000000
+  - Name:            .debug_line
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         0000004F0005020000000037010101FB0E0D00010101010000000100000101011F010000000003011F020F051E0100000002001311058AF0A95CF07EDBE8283B29F1B304000003028000193D213D0202000101000000BC0005020000000037010101FB0E0D00010101010000000100000101011F010000000003011F020F051E010000000A00565D514FF673B200D311E1BCC7CF26DB0400000302800C031801050F0A590511063C050708580519063D0508063C050A063D0503063C0500063F050C0A5A050A063C050C063D050E063C050A2E050C063D050E063C050A2E050C063D050E063C050A2E050F063D0516063C050A2E051D3C051B66050308D6050D060A40050B06660508063D0501590201000101
+  - Name:            .debug_line_str
+    Type:            SHT_PROGBITS
+    Flags:           [ SHF_MERGE, SHF_STRINGS ]
+    AddressAlign:    0x1
+    EntSize:         0x1
+    Content:         2E0073746172742E730063666977616C6B2E6300
+  - Name:            .debug_str_offsets
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x1
+    Content:         000000400005000000000019000000BA00000017000000860000009C0000000000000098000000B5000000C800000008000000940000000F00000011000000C4000000A1
+  - Name:            .debug_frame
+    Type:            SHT_PROGBITS
+    AddressAlign:    0x2
+    Content:         00000010FFFFFFFF04000200017F050C040285010000000E00000000800C002D420E0A6A0E02000000100000000080390053420E1402500E02000000000800000000808C000F
+  - Type:            SectionHeaderTable
+    Sections:
+      - Name:            .page0
+      - Name:            .text
+      - Name:            .bss
+      - Name:            .vectors
+      - Name:            .debug_info
+      - Name:            .debug_abbrev
+      - Name:            .debug_aranges
+      - Name:            .debug_line
+      - Name:            .debug_line_str
+      - Name:            .debug_str_offsets
+      - Name:            .debug_str
+      - Name:            .debug_addr
+      - Name:            .debug_frame
+      - Name:            .symtab
+      - Name:            .shstrtab
+      - Name:            .strtab
+Symbols:
+  - Name:            hang
+    Section:         .text
+    Value:           0x8007
+  - Name:            cfiwalk.c
+    Type:            STT_FILE
+    Index:           SHN_ABS
+  - Name:            _start
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x8000
+  - Name:            run
+    Type:            STT_FUNC
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x808C
+    Size:            0xF
+  - Name:            leaf
+    Type:            STT_FUNC
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x800C
+    Size:            0x2D
+  - Name:            port
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x100
+    Size:            0x1
+  - Name:            middle
+    Type:            STT_FUNC
+    Section:         .text
+    Binding:         STB_GLOBAL
+    Value:           0x8039
+    Size:            0x53
+  - Name:            counter
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x101
+    Size:            0x2
+  - Name:            done
+    Type:            STT_OBJECT
+    Section:         .bss
+    Binding:         STB_GLOBAL
+    Value:           0x103
+    Size:            0x1
+  - Name:            HCS08_DP_BANK_SIZE
+    Index:           SHN_ABS
+    Binding:         STB_GLOBAL
+    Value:           0x8
+  - Name:            __page0_end
+    Section:         .page0
+    Binding:         STB_GLOBAL
+    Value:           0x80
+  - Name:            __hcs08_dp_bank
+    Index:           SHN_ABS
+    Binding:         STB_GLOBAL
+    Value:           0xF8
+DWARF:
+  debug_str:
+    - counter
+    - middle
+    - n
+    - local
+    - .
+    - 'clang version 24.0.0git (git@github.com:atomicdog/llvm-project.git 3a7aabcd315edf4b76d6b444366eee102ce1417e)'
+    - unsigned char
+    - run
+    - int
+    - port
+    - __ARRAY_SIZE_TYPE__
+    - done
+    - cfiwalk.c
+    - pad
+    - leaf
+  debug_aranges:
+    - Length:          0x10
+      Version:         2
+      CuOffset:        0x0
+      AddressSize:     0x2
+      Descriptors:
+        - Address:         0x8000
+          Length:          0x9
+  debug_addr:
+    - Length:          0x10
+      Version:         0x5
+      AddressSize:     0x2
+      Entries:
+        - Address:         0x800C
+        - Address:         0x8039
+        - Address:         0x808C
+        - Address:         0x100
+        - Address:         0x101
+        - Address:         0x103
+...

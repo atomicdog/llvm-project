@@ -139,6 +139,15 @@ TEST(ArchSpecTest, TestSetTriple) {
   EXPECT_EQ(ArchSpec::eCore_msp430, AS.GetCore());
 
   AS = ArchSpec();
+  EXPECT_TRUE(AS.SetTriple("hcs08---elf"));
+  EXPECT_EQ(llvm::Triple::hcs08, AS.GetTriple().getArch());
+  EXPECT_STREQ("hcs08", AS.GetArchitectureName());
+  EXPECT_EQ(ArchSpec::eCore_hcs08, AS.GetCore());
+  // Big endian, unlike every other 16-bit core lldb knows about.
+  EXPECT_EQ(lldb::eByteOrderBig, AS.GetByteOrder());
+  EXPECT_EQ(2u, AS.GetAddressByteSize());
+
+  AS = ArchSpec();
   EXPECT_TRUE(AS.SetTriple("amd64-unknown-openbsd"));
   EXPECT_EQ(llvm::Triple::x86_64, AS.GetTriple().getArch());
   EXPECT_STREQ("amd64", AS.GetArchitectureName());

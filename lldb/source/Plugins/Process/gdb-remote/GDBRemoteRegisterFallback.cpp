@@ -20,6 +20,7 @@ namespace process_gdb_remote {
 #define R64(name) REG(name, 8)
 #define R32(name) REG(name, 4)
 #define R16(name) REG(name, 2)
+#define R8(name) REG(name, 1)
 
 static std::vector<DynamicRegisterInfo::Register> GetRegisters_aarch64() {
   ConstString empty_alt_name;
@@ -32,6 +33,27 @@ static std::vector<DynamicRegisterInfo::Register> GetRegisters_aarch64() {
       R64(x21), R64(x22), R64(x23), R64(x24), R64(x25), R64(x26),  R64(x27),
       R64(x28), R64(x29), R64(x30), R64(sp),  R64(pc),  R32(cpsr),
   };
+
+  return registers;
+}
+
+// The HCS08 programmer's model in full, and in the order a `g` packet should
+// carry it: eight bytes altogether. The first three deliberately line up with
+// DWARF numbers 0, 1 and 2 (see the ABI plugin), and CCR is the one 8-bit
+// condition code register the hardware actually has - the backend's split of it
+// into NZV and C halves exists to constrain instruction selection and is not
+// something a BDM probe can see.
+//
+// H:X, DWARF number 3, is absent on purpose: it is the *pair* of h and x rather
+// than a seventh register, so a stub that wants a debugger to read the variables
+// living in it has to declare it as a composite in its target XML, where
+// value_regs can say so. This fallback is for stubs that supply no XML at all.
+static std::vector<DynamicRegisterInfo::Register> GetRegisters_hcs08() {
+  ConstString empty_alt_name;
+  ConstString reg_set{"general purpose registers"};
+
+  std::vector<DynamicRegisterInfo::Register> registers{
+      R8(a), R8(h), R8(x), R16(sp), R16(pc), R8(ccr)};
 
   return registers;
 }
@@ -75,6 +97,7 @@ static std::vector<DynamicRegisterInfo::Register> GetRegisters_x86_64() {
   return registers;
 }
 
+#undef R8
 #undef R32
 #undef R64
 #undef REG
@@ -84,6 +107,8 @@ GetFallbackRegisters(const ArchSpec &arch_to_use) {
   switch (arch_to_use.GetMachine()) {
   case llvm::Triple::aarch64:
     return GetRegisters_aarch64();
+  case llvm::Triple::hcs08:
+    return GetRegisters_hcs08();
   case llvm::Triple::msp430:
     return GetRegisters_msp430();
   case llvm::Triple::x86:

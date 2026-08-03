@@ -33,8 +33,18 @@
 #include "HCS08Subtarget.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
+
+// A way to take this pass out of the pipeline, matching the one
+// HCS08StackToIndexed already has. Both exist for the same reason: these are
+// target-specific passes with no equivalent anywhere else, so when a program
+// miscompiles they are the first things worth eliminating, and doing that by
+// editing and rebuilding is slow enough to discourage it.
+static cl::opt<bool>
+    DisablePass("hcs08-no-fuse-compare-branch", cl::Hidden,
+                cl::desc("Leave HCS08 compares and branches unfused"));
 
 #define DEBUG_TYPE "hcs08-fuse-compare-branch"
 #define PASS_NAME "HCS08 compare/branch fusion"
@@ -70,6 +80,9 @@ static bool isFoldableFlagSetter(const MachineInstr &MI) {
 }
 
 bool HCS08FuseCompareBranch::runOnMachineFunction(MachineFunction &MF) {
+  if (DisablePass)
+    return false;
+
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   bool Changed = false;
 

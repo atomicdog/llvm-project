@@ -26,6 +26,15 @@
 // value being compared and the reload needs it to hold something else. The
 // only fix is for there to be no gap to insert into.
 //
+// Which means the adjacency this pass folds has to be established rather than
+// assumed. Earlier passes are entitled to put something between a compare and
+// its branch as long as they believe it leaves the flags alone - MachineCSE
+// hoists a common subexpression into the dominating block, and it lands before
+// the terminator, which is after the compare. Folding only what is already
+// adjacent silently skips those, and a skipped pair is the one allocation then
+// breaks. So a gap whose contents are indifferent to the flags is closed here
+// first, by sinking the compare to meet its branch.
+//
 //===----------------------------------------------------------------------===//
 
 #include "HCS08.h"
@@ -79,11 +88,52 @@ static bool isFoldableFlagSetter(const MachineInstr &MI) {
          MI.definesRegister(HCS08::NZV, /*TRI=*/nullptr);
 }
 
+/// Can the flag setter move down across \p MI to reach its branch?
+///
+/// Being next to the branch is not something the flag setter is given; a pass
+/// that believes it is leaving the flags alone may put an instruction in
+/// between, and MachineCSE does exactly that - it sinks a common subexpression
+/// to the end of the block it dominates, which is after the compare and before
+/// the terminator. So the gap has to be closed rather than given up on, and
+/// what makes that safe is that the instruction sitting in it does not care
+/// when the flags are set.
+static bool canSinkFlagSetterAcross(const MachineInstr &Flags,
+                                    const MachineInstr &MI,
+                                    const TargetRegisterInfo &TRI) {
+  if (MI.isTerminator() || MI.isCall() || MI.isInlineAsm() ||
+      MI.isPosition() || MI.isBundle() || MI.hasUnmodeledSideEffects())
+    return false;
+
+  // Anything that reads either flag group would see the wrong one afterwards,
+  // and anything that writes one is itself what the branch reads - in which
+  // case this compare is dead and moving it would be a lie.
+  for (MCRegister Flag : {MCRegister(HCS08::NZV), MCRegister(HCS08::C)})
+    if (MI.readsRegister(Flag, &TRI) || MI.modifiesRegister(Flag, &TRI))
+      return false;
+
+  // The compare has to keep reading what it read before, so nothing it reads
+  // may be written by the instruction it moves past.
+  for (const MachineOperand &MO : MI.operands())
+    if (MO.isReg() && MO.isDef() && MO.getReg() &&
+        Flags.readsRegister(MO.getReg(), &TRI))
+      return false;
+
+  // The foldable set includes the read-modify-write decrement a countdown loop
+  // ends with, so the flag setter is not always load-only. Two loads may swap;
+  // a store may not cross anything that touches memory.
+  if ((Flags.mayStore() && MI.mayLoadOrStore()) ||
+      (MI.mayStore() && Flags.mayLoadOrStore()))
+    return false;
+
+  return true;
+}
+
 bool HCS08FuseCompareBranch::runOnMachineFunction(MachineFunction &MF) {
   if (DisablePass)
     return false;
 
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
   bool Changed = false;
 
   for (MachineBasicBlock &MBB : MF) {
@@ -93,19 +143,44 @@ bool HCS08FuseCompareBranch::runOnMachineFunction(MachineFunction &MF) {
       if (MI.getIterator() == MBB.begin())
         continue;
 
-      MachineInstr &Flags = *std::prev(MI.getIterator());
-      if (!isFoldableFlagSetter(Flags))
+      // Whatever last wrote NZV is what this branch reads, however far back it
+      // is. Looking only at the immediately preceding instruction would miss a
+      // compare that something else has been slipped in front of, and missing
+      // it is not neutral: the pair stays unfused, and allocation then fills
+      // the same gap with a reload, which is an lda, which sets N and Z.
+      MachineInstr *Flags = nullptr;
+      SmallVector<MachineInstr *, 4> Between;
+      for (MachineBasicBlock::iterator It = MI.getIterator();
+           It != MBB.begin() && !Flags;) {
+        MachineInstr &Prev = *--It;
+        if (Prev.isDebugInstr())
+          continue;
+        if (Prev.modifiesRegister(HCS08::NZV, &TRI))
+          Flags = &Prev;
+        else
+          Between.push_back(&Prev);
+      }
+
+      if (!Flags || !isFoldableFlagSetter(*Flags))
+        continue;
+      if (!llvm::all_of(Between, [&](const MachineInstr *Gap) {
+            return canSinkFlagSetterAcross(*Flags, *Gap, TRI);
+          }))
         continue;
 
-      auto Fused = BuildMI(MBB, Flags, MI.getDebugLoc(), TII.get(HCS08::CMPBR))
-                       .addImm(MI.getOpcode())
-                       .addImm(Flags.getOpcode())
-                       .addMBB(MI.getOperand(0).getMBB());
-      for (const MachineOperand &MO : Flags.explicit_operands())
-        Fused.add(MO);
-      Fused.cloneMemRefs(Flags);
+      // Close the gap before folding, so that what is folded is adjacent.
+      if (!Between.empty())
+        MBB.splice(MI.getIterator(), &MBB, Flags->getIterator());
 
-      Flags.eraseFromParent();
+      auto Fused = BuildMI(MBB, *Flags, MI.getDebugLoc(), TII.get(HCS08::CMPBR))
+                       .addImm(MI.getOpcode())
+                       .addImm(Flags->getOpcode())
+                       .addMBB(MI.getOperand(0).getMBB());
+      for (const MachineOperand &MO : Flags->explicit_operands())
+        Fused.add(MO);
+      Fused.cloneMemRefs(*Flags);
+
+      Flags->eraseFromParent();
       MI.eraseFromParent();
       Changed = true;
     }

@@ -862,9 +862,16 @@ def TXAd : F8<0x9F, AddrModeInh, (outs GR8:$dst), (ins GR16:$src), "txa",
               [(set GR8:$dst, (trunc GR16:$src))]>;
 
 let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
-  // tax then clrh. Neither writes A or any flag, so this clobbers nothing. An
-  // any-extend goes the same way rather than leaving H undefined, which would
-  // be a value nothing later is allowed to look at.
+  // tax then clrh. Neither writes A, but clrh is a member of the clr family
+  // and writes the flags like the rest of it - V and N cleared, Z set -
+  // measured on an MC9S08AW60 rather than taken from the manual: with Z left
+  // 0 by an unequal compare, tpa reads back $6A after a clrh and $68 after a
+  // tax. Saying otherwise made a zero-extension look safe to place between a
+  // compare and the branch reading it, which MachineCSE then did.
+  //
+  // An any-extend goes the same way rather than leaving H undefined, which
+  // would be a value nothing later is allowed to look at.
+  let Defs = [NZV] in
   def ZEXT8to16 : HCS08Inst<2, AddrModeNone, (outs GR16:$dst), (ins GR8:$src),
                             "", []>;
   // tax, then a copy of the sign bit into H, built without branching:
@@ -914,7 +921,9 @@ let isCodeGenOnly = 1, hasSideEffects = 0 in {
   let mayLoad = 1, Defs = [X, NZV] in
   def LDXsp : F24P<0xEE, AddrModeSp1, (outs), (ins spmem:$b0), "ldx\t$b0", []>;
 
-  let Defs = [H] in
+  // clr clears the flags it can and sets Z; clrh is no exception. See the
+  // note on ZEXT8to16, which is where the omission was doing damage.
+  let Defs = [H, NZV] in
   def CLRHd : F8<0x8C, AddrModeInh, (outs), (ins), "clrh", []>;
 
   let Constraints = "$src = $dst", Uses = [X] in {

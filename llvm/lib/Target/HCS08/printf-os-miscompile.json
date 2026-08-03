@@ -1,180 +1,71 @@
 {
   "$schema": "informal; hand-written handoff note",
   "title": "-Os miscompile of hcs08_vformat: %u consumes 4 bytes instead of 2",
-  "status": "OPEN - localized, root cause not found",
+  "status": "FIXED - root cause found, two defects, both fixed and verified on silicon",
   "recorded": "2026-08-02",
+  "resolved": "2026-08-03",
   "severity": "high - silently wrong output from correct C; no diagnostic",
   "found_by": "running the HCS08 SDK's printf on real silicon (MC9S08AW60)",
-  "symptom": {
-    "description": "In a printf-family call, a %u (or %d) conversion reads a 32-bit value where it should read 16, so it swallows two adjacent 16-bit varargs and prints them as one. Conversions before it are correct.",
-    "observed": [
-      {
-        "call": "snprintf(out, n, \"[%u][%u]\", 0, 26)",
-        "got": "[26][17044]",
-        "want": "[0][26]",
-        "note": "26 == (0 << 16) | 26, i.e. one clean 32-bit read spanning both args"
-      },
-      {
-        "call": "snprintf(out, n, \"s=%s c=%c u=%u\", \"hi\", 'X', 26)",
-        "got": "s=hi c=X u=1720980",
-        "want": "s=hi c=X u=26",
-        "note": "1720980 == 0x001A46D4; 0x1A == 26 sits in the HIGH half. %s and %c are CORRECT."
-      }
+
+  "root_cause": {
+    "summary": "A conditional branch was reading flags written by an instruction other than its compare, so `if (longs == 0)` always took its non-zero side and every %u ran the 32-bit converter.",
+    "the_block": [
+      "lda  $19,x    ; longs",
+      "cmp  #$00     ; sets NZV from longs == 0",
+      "lda  $25,x    ; base - lda sets N and Z, so this overwrites the test",
+      "tax",
+      "clrh",
+      "sthx $1e,sp",
+      "bne  .LBB1_76 ; tests base, not longs"
     ],
-    "stability": "The FIRST wrong conversion is deterministic across builds. Later ones vary (17044, 17123, 17255) - that is reading uninitialised stack past the last argument."
-  },
-  "key_insight": {
-    "statement": "%s and %c are correct and only %u is wrong, so the argument cursor advances properly and then the %u conversion itself over-reads.",
-    "why_it_matters": "This is NOT a va_start/va_list offset bug. Three reproducers were built against that wrong model and none reproduced. Any new reproducer must make the *conversion* over-read, not the cursor start wrong.",
-    "corollary": "More than one local is corrupt: with HCS08FuseCompareBranch disabled, `width` also came back garbage (output became '[' + 20 spaces). Points at register allocation or spill placement, not a mis-taken branch."
-  },
-  "trigger_conditions": {
-    "optimization": "-Os FAILS, -O1 PASSES. -O0 cannot be tested: frame reaches SP+277 vs the 256-byte ceiling and the backend correctly refuses.",
-    "source_config": "Fails only when HCS08_PRINTF_LONG=1, i.e. when the 32-bit converter is present in the same function as the 16-bit one. HCS08_PRINTF_LONG=0 passes.",
-    "function": "hcs08_vformat in hcs08-sdk/lib/libc/printf/fmt.c - large, variadic, four near-identical inlined conversion loops (%d and %u each split narrow/wide)."
-  },
-  "established_facts": [
-    {
-      "fact": "The LLVM IR is correct.",
-      "evidence": "hcs08_vformat has exactly 2x 'udiv i16' and 2x 'udiv i32'. Both narrow/wide selections are 'icmp eq i8 %longs.0, 0' against the loop-header phi - right value, right point.",
-      "conclusion": "Middle end and the C source are both exonerated. This is a backend bug."
-    },
-    {
-      "fact": "The machine code keeps the right shape.",
-      "evidence": "2 'jsr __udivhi3' sites and 2 'jsr __udivsi3' sites at -Os with LONG=1.",
-      "conclusion": "No narrow conversion site was rewritten into a wide one."
-    },
-    {
-      "fact": "The narrow blocks are reachable only by fall-through.",
-      "evidence": "Nothing branches INTO .LBB1_84 or .LBB1_99 except their own loop-back edges.",
-      "conclusion": "Legal, but this is where to look: verify the fall-through predecessor is guarded by the longs==0 test."
-    },
-    {
-      "fact": "Frames are nowhere near the 8-bit displacement ceiling.",
-      "evidence": "hcs08_vformat frame = 74 bytes at -Os/LONG=1, 49 at -Os/LONG=0, 77 at -O1/LONG=1. Largest n,sp displacement observed 0x51.",
-      "conclusion": "Nothing wraps. Note the WORKING -O1 build has a BIGGER frame than the failing -Os build, so frame size is not the variable."
-    }
-  ],
-  "eliminated": [
-    {
-      "suspect": "va_start / va_arg / va_list offset",
-      "method": "%s and %c through the same cursor are correct; a noinline callee consuming a va_list against snprintf's exact signature is correct; f(fmt,...), f(fmt,int,...) and f(buf,n,fmt,...) all correct.",
-      "result": "not the cause"
-    },
-    {
-      "suspect": "`longs` clobbered by register allocation",
-      "method": "declared it volatile, forcing it to memory",
-      "result": "no change - still fails"
-    },
-    {
-      "suspect": "Frame layout / FMT_DIGITS",
-      "method": "HCS08_PRINTF_LONG also shrinks FMT_DIGITS 12->8, so the passing build was a confounded two-variable change. Forced FMT_DIGITS=8 while keeping the wide path.",
-      "result": "fails byte-for-byte identically - it is the wide path, not the frame"
-    },
-    {
-      "suspect": "Machine tail merging of the four similar loops",
-      "method": "-mllvm -enable-tail-merge=false",
-      "result": "still fails (was the leading theory; it is wrong)"
-    },
-    {
-      "suspect": "HCS08StackToIndexed pass",
-      "method": "-mllvm -hcs08-no-stack-to-indexed",
-      "result": "still fails"
-    },
-    {
-      "suspect": "HCS08FuseCompareBranch pass",
-      "method": "-mllvm -hcs08-no-fuse-compare-branch (flag added in commit 508bfd6e3838 for this purpose)",
-      "result": "still fails, but DIFFERENTLY - `width` also corrupt. Informative: multiple locals are wrong."
-    },
-    {
-      "suspect": "va_arg for 2-byte and 4-byte types in one variadic function",
-      "method": "minimal variadic fn with va_arg(unsigned int) and va_arg(unsigned long) on runtime-selected paths, run on silicon",
-      "result": "correct (returns 7 and 9) - not the cause"
-    },
-    {
-      "suspect": "Branch selection between two inlined loops, in isolation",
-      "method": "25-line fn with a narrow and a wide conversion loop selected on a runtime flag, run on silicon",
-      "result": "correct (returns \"26\") - does not reproduce; note it used no varargs, which was the flaw"
-    }
-  ],
-  "workarounds": [
-    {
-      "what": "HCS08_PRINTF_LONG=0",
-      "status": "SHIPPED as the SDK default",
-      "cost": "%ld truncates to 16 bits instead of corrupting following args; %u and %d correct"
-    },
-    {
-      "what": "build fmt.c at -O1",
-      "status": "verified on silicon",
-      "cost": "size"
-    }
-  ],
-  "debug_plan": {
-    "note": "Steps are ordered cheapest-first. Steps 1-2 need no hardware.",
-    "steps": [
-      {
-        "n": 1,
-        "title": "Diff the machine pass pipeline between -O1 and -Os",
-        "why": "This is the one mechanical step left; everything else has been guesswork. -O1 passes and -Os fails on identical source.",
-        "how": [
-          "B=/var/home/atomicdog/repo/llvm-project/build-hcs08-asserts/bin",
-          "S=/var/home/atomicdog/projects/hcs08-sdk",
-          "for O in -O1 -Os; do $B/clang -target hcs08 $O -ffreestanding -std=c11 -fno-builtin -DHCS08_PRINTF_LONG=1 -I$S/include -I$S/devices/aw60/include -mllvm -print-after-all -S -o /dev/null $S/lib/libc/printf/fmt.c 2>/tmp/pa$O.txt; done",
-          "diff the two, restricted to hcs08_vformat"
-        ],
-        "looking_for": "the first pass after which the %u path stops loading two bytes (i.e. a 16-bit load becomes 32-bit, or the narrow block loses its guard)"
-      },
-      {
-        "n": 2,
-        "title": "Check the fall-through guard into the narrow blocks",
-        "why": "Nothing branches into .LBB1_84/.LBB1_99 except loop-backs, so correctness depends entirely on their fall-through predecessor being guarded by longs==0.",
-        "how": [
-          "$B/clang -target hcs08 -Os ... -S -o /tmp/f1.s $S/lib/libc/printf/fmt.c",
-          "locate the blocks containing 'jsr __udivhi3' and walk their predecessors"
-        ],
-        "looking_for": "a predecessor reachable when longs != 0"
-      },
-      {
-        "n": 3,
-        "title": "Bisect the -Os-only machine passes",
-        "why": "Three target-specific passes are excluded; the remaining delta is generic -Os machine passes (MachineSink, MachineCSE, MachineBlockPlacement, RegAllocGreedy heuristics).",
-        "how": [
-          "disable candidates individually with -mllvm flags at -Os until it passes"
-        ]
-      },
-      {
-        "n": 4,
-        "title": "Reduce with the corrected model",
-        "why": "All three previous reproducers assumed a cursor offset. The real shape is: cursor correct for N conversions, then one conversion over-reads.",
-        "how": [
-          "start from fmt.c and delete downward, keeping a variadic caller, four inlined conversion loops, and a switch",
-          "verify each step on silicon - ucsim CANNOT be used, see gotchas"
-        ]
-      }
+    "why_it_always_failed": "base is 8, 10 or 16 for o/u/x/X - never zero - so the bne was always taken and the wide path always ran.",
+    "chain": [
+      "MachineCSE's PRE hoisted a ZEXT8to16 of `base` into the block dominating both conversion paths, and placed it before the terminator - which is after the compare.",
+      "HCS08FuseCompareBranch only ever looked at std::prev(branch), so it found the extend rather than the compare, declined to fuse, and left the pair split.",
+      "Register allocation then filled the same gap, exactly as that pass's own header comment predicts: a reload (lda, sets N and Z) for `base` and a spill (sthx, sets N and Z) of the extended value.",
+      "The branch read those flags instead of the compare's."
     ]
   },
-  "gotchas": [
+
+  "defects_fixed": [
     {
-      "trap": "ucsim results are worthless for this bug",
-      "detail": "ucsim does not implement ldhx/sthx n,sp (0x9E FE/FF), which is exactly the 16-bit stack-argument path varargs use. It reported a DIFFERENT wrong answer than the part, and reports this failing even when the part runs it correctly. test/target/t_pf2.c is marked SILICON_ONLY for this reason."
+      "what": "HCS08FuseCompareBranch gave up whenever anything sat between a compare and its branch.",
+      "fix": "Walk back to whatever last wrote NZV. If that is a foldable flag setter and everything in the gap neither reads nor writes either flag group, nor defines a register the compare reads, nor conflicts over memory, sink the compare down to the branch and fuse. Otherwise leave it alone, as before.",
+      "file": "llvm/lib/Target/HCS08/HCS08FuseCompareBranch.cpp"
     },
     {
-      "trap": "The SDK's 370 host printf tests pass throughout, before and after",
-      "detail": "They use the host libc as an oracle. The host's int is 32-bit, so a converter reading 32 where it should read 16 is simply correct there. The host oracle is structurally blind to target argument layout."
-    },
-    {
-      "trap": "-O0 cannot be used as a control",
-      "detail": "hcs08_vformat's frame reaches SP+277 against the 256-byte ceiling and the backend refuses. That refusal is correct and unrelated to this bug. A build script that does not check for a failed compile will silently test a stale .o and report a false PASS - this happened once."
-    },
-    {
-      "trap": "Reading filtered assembly",
-      "detail": "A grep filter listing bne/beq/jmp but not bcc made a correct narrow loop look like it had no exit test. Dump whole blocks before concluding."
-    },
-    {
-      "trap": "HCS08_PRINTF_LONG changes two things",
-      "detail": "It gates the wide converter AND changes FMT_DIGITS 12->8, hence the frame. Any experiment toggling it is confounded unless FMT_DIGITS is pinned."
+      "what": "clrh was modelled as writing no flags. It writes them like the rest of the clr family: V and N cleared, Z set.",
+      "consequence": "ZEXT8to16 is `tax; clrh`, so every byte-to-word zero extension silently clobbered NZV. That is what let MachineCSE put one between a compare and its branch in the first place, and it would equally have corrupted a SELECT8/SELECT16, which read NZV and which fusion does not protect.",
+      "fix": "ZEXT8to16 declares Defs = [NZV]; CLRHd declares Defs = [H, NZV]; the expandPostRAPseudo BuildMI for CLRH adds the implicit NZV def.",
+      "files": [
+        "llvm/lib/Target/HCS08/HCS08InstrInfo.td",
+        "llvm/lib/Target/HCS08/HCS08InstrInfo.cpp"
+      ],
+      "measured_not_quoted": "On an MC9S08AW60, with Z left 0 by an unequal compare, tpa reads back $6A after clrh and $68 after tax - identical but for bit 1, which is Z. See test/target/t_clrh_flags.c in the SDK, where tax is the control."
     }
   ],
+
+  "how_it_was_found": {
+    "the_decisive_observation": "The recorded symptom `u=1720980` is larger than 65535. utoa16_rev takes a 16-bit unsigned and divides with __udivhi3, so it cannot emit that value at all - only utoa_wide_rev can. So the wide converter was *running*, which meant the branch was mis-taken rather than a narrow conversion over-reading.",
+    "what_had_blocked_it": "The earlier conclusion that 'no narrow conversion site was rewritten into a wide one' was sound as far as it went - the counts of __udivhi3 and __udivsi3 call sites were right - but it was read as exonerating the branch, which it did not. Both conversion loops were present and correct; the selection between them was not.",
+    "the_mechanical_step": "-print-after-all at -Os, then for each machine pass, for each conditional branch, walk back to the nearest NZV def and report it when it is not a compare. That named MachineCSE on the first try."
+  },
+
+  "verification": [
+    "llvm/test/CodeGen/HCS08/cmp-branch-fusion-gap.mir - four cases: a gap that closes (aix, which genuinely leaves the CCR alone), and three that must not fuse (an extend, an arithmetic flag write, and a redefinition of what the compare reads). Confirmed to fail without the pass fix.",
+    "llvm/test/CodeGen/HCS08 - 43/43.",
+    "Whole-file scan of hcs08_vformat's -Os assembly for any NZV writer between a compare and its branch: 1 before the fix, 0 after.",
+    "SDK `make check` - 370 host checks, 3 ucsim target tests, the self-call check.",
+    "Silicon, MC9S08AW60, with HCS08_PRINTF_LONG=1 - the configuration that failed: 5/5, t_pf2.c included. RAM is poisoned with 0xEE before each run, so a stale answer cannot pass.",
+    "libhcs08_aw60.a is 6034 bytes before and after; the flag modelling change costs nothing here."
+  ],
+
+  "follow_up": {
+    "sdk_default": "HCS08_PRINTF_LONG=0 was shipped as the SDK default only to dodge this bug. It can be reconsidered now, which is an SDK decision rather than a backend one.",
+    "residual_risk": "Spill and reload code still does not consult NZV liveness - LLVM assumes throughout that it cannot clobber flags, and on this machine every reload is an lda. Fusion is what makes that safe, so it has to reach every conditional branch. The .mir test is what keeps it honest.",
+    "ucsim": "Still cannot run t_pf2.c: it does not implement ldhx/sthx n,sp (0x9E FE/FF), which is the 16-bit stack-argument path varargs use. The test stays SILICON_ONLY."
+  },
+
   "environment": {
     "llvm": {
       "repo": "/var/home/atomicdog/repo/llvm-project",
@@ -185,7 +76,7 @@
     "sdk": {
       "repo": "/var/home/atomicdog/projects/hcs08-sdk",
       "build": "toolbox run -c fedora make all",
-      "reproducer": "test/target/t_pf2.c (has the full narrative in its trailing comment)"
+      "reproducer": "test/target/t_pf2.c"
     },
     "silicon": {
       "part": "MC9S08AW60 on a Valco/VICI UA display board",
@@ -201,30 +92,33 @@
       ]
     }
   },
+
+  "gotchas_kept_because_they_cost_time": [
+    {
+      "trap": "The SDK's 370 host printf tests pass throughout, before and after",
+      "detail": "They use the host libc as an oracle. The host's int is 32-bit, so a converter reading 32 where it should read 16 is simply correct there. The host oracle is structurally blind to target argument layout."
+    },
+    {
+      "trap": "-O0 cannot be used as a control",
+      "detail": "hcs08_vformat's frame reaches SP+277 against the 256-byte ceiling and the backend refuses. That refusal is correct and unrelated. A build script that does not check for a failed compile will silently test a stale .o and report a false PASS - this happened once."
+    },
+    {
+      "trap": "Reading filtered assembly",
+      "detail": "A grep filter listing bne/beq/jmp but not bcc made a correct narrow loop look like it had no exit test. Dump whole blocks before concluding."
+    },
+    {
+      "trap": "HCS08_PRINTF_LONG changes two things",
+      "detail": "It gates the wide converter AND changes FMT_DIGITS 12->8, hence the frame. Any experiment toggling it is confounded unless FMT_DIGITS is pinned."
+    }
+  ],
+
   "related_commits": {
     "llvm": [
-      {
-        "sha": "508bfd6e3838",
-        "what": "[HCS08] Add a disable flag for the compare/branch fusion pass (added while chasing this)"
-      },
-      {
-        "sha": "3a3418aad28a",
-        "what": "[HCS08] Say there are no jump tables, so none is built (unrelated bug found by the same printf)"
-      },
-      {
-        "sha": "c24e0109e126",
-        "what": "[HCS08] Select bset and bclr"
-      },
-      {
-        "sha": "08a8fd2be119",
-        "what": "[HCS08] Let inline assembly ask for a register"
-      }
+      { "sha": "508bfd6e3838", "what": "[HCS08] Add a disable flag for the compare/branch fusion pass (added while chasing this; the differing failure it produced - `width` also corrupt - was the clue that several locals were wrong, i.e. a flags problem rather than one bad branch)" },
+      { "sha": "3a3418aad28a", "what": "[HCS08] Say there are no jump tables, so none is built (unrelated bug found by the same printf)" },
+      { "sha": "c24e0109e126", "what": "[HCS08] Select bset and bclr" },
+      { "sha": "08a8fd2be119", "what": "[HCS08] Let inline assembly ask for a register (which is what t_clrh_flags.c needs to read the CCR with tpa)" }
     ],
-    "sdk": [
-      "1921564",
-      "1018c5d",
-      "06b1b0a",
-      "08fc3e3"
-    ]
+    "sdk": ["1921564", "1018c5d", "06b1b0a", "08fc3e3"]
   }
 }

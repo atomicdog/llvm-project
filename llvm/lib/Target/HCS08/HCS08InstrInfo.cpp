@@ -219,7 +219,12 @@ bool HCS08InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     }
 
     if (MI.getOpcode() == HCS08::ZEXT8to16) {
-      BuildMI(MBB, MI, DL, get(HCS08::CLRH)).addReg(HCS08::H, Def);
+      // clrh writes the flags, the same as the rest of the clr family - which
+      // is why ZEXT8to16 declares NZV and why this has to keep saying so after
+      // the pseudo has come apart.
+      BuildMI(MBB, MI, DL, get(HCS08::CLRH))
+          .addReg(HCS08::H, Def)
+          .addReg(HCS08::NZV, Def);
     } else {
       // lsla shifts the sign bit into the carry...
       BuildMI(MBB, MI, DL, get(HCS08::LSLA))

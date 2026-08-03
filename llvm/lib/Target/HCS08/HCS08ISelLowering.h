@@ -43,6 +43,16 @@ public:
   EmitInstrWithCustomInserter(MachineInstr &MI,
                               MachineBasicBlock *MBB) const override;
 
+  /// Inline assembly operand constraints. 'a' is the accumulator and 'x' is
+  /// the H:X pair; clang already accepts both, but without these hooks the
+  /// allocator has nothing to satisfy them with and every asm with a register
+  /// operand fails with "could not allocate output register for constraint".
+  ConstraintType getConstraintType(StringRef Constraint) const override;
+
+  std::pair<unsigned, const TargetRegisterClass *>
+  getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                               StringRef Constraint, MVT VT) const override;
+
 private:
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;

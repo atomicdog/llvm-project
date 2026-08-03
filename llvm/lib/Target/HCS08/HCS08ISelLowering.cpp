@@ -490,6 +490,55 @@ static MachineBasicBlock *emitMulDiv(MachineInstr &MI, MachineBasicBlock *MBB,
   return MBB;
 }
 
+//===----------------------------------------------------------------------===//
+// Inline assembly
+//===----------------------------------------------------------------------===//
+
+// There is deliberately no 'r'. With one 8-bit register and one 16-bit pair
+// there is nothing for a general register constraint to choose between, and
+// accepting it would be a promise that the operand can go wherever the
+// allocator likes - which on this machine is one place, decided by the operand
+// width. Asking for the width you want by name is the honest interface.
+//
+// 'm' is also absent, and that is a bigger decision than it looks: a memory
+// constraint needs getInlineAsmMemConstraint and PrintAsmMemoryOperand, and
+// with five addressing modes and one index register, deciding what %0 expands
+// to is a design question rather than a hook.
+TargetLowering::ConstraintType
+HCS08TargetLowering::getConstraintType(StringRef Constraint) const {
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    case 'a': // the accumulator
+    case 'x': // the index register pair, H:X
+      return C_RegisterClass;
+    default:
+      break;
+    }
+  }
+  return TargetLowering::getConstraintType(Constraint);
+}
+
+std::pair<unsigned, const TargetRegisterClass *>
+HCS08TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                                                  StringRef Constraint,
+                                                  MVT VT) const {
+  // Returning the class rather than a fixed physical register is what lets the
+  // allocator handle tied operands, and lets the named forms - {a}, {hx} -
+  // fall through to the base implementation, which matches them against the
+  // register names TRI already knows.
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    case 'a':
+      return std::make_pair(0U, &HCS08::GR8RegClass);
+    case 'x':
+      return std::make_pair(0U, &HCS08::GR16RegClass);
+    default:
+      break;
+    }
+  }
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
+}
+
 MachineBasicBlock *
 HCS08TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *MBB) const {

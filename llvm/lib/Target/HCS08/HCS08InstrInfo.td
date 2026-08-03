@@ -352,11 +352,58 @@ def DBNZ_sp1  : F32PB<0x6B, AddrModeSp1, (outs), (ins imm8:$b0, brtarget4:$b1),
 
 // bset n,$dd / bclr n,$dd occupy 0x10-0x1F, with the bit number in opcode bits
 // 3-1 and set/clear in bit 0.
+//
+// mayLoad and mayStore are what make these selectable rather than
+// assembler-only. Without them the scheduler is entitled to move a read-
+// modify-write against the volatile access it is supposed to *be*, which for a
+// peripheral register is exactly wrong. They affect no condition codes at all,
+// which is why there is no Defs here and why replacing lda/ora/sta with one of
+// them removes a CCR clobber as well as four bytes.
+let mayLoad = 1, mayStore = 1, hasSideEffects = 0 in
 foreach i = 0-7 in {
   def BSET#i : F16<!add(0x10, !mul(i, 2)), AddrModeDir, (outs), (ins dpmem:$b0),
                    "bset\t" # i # ",$b0">;
   def BCLR#i : F16<!add(0x11, !mul(i, 2)), AddrModeDir, (outs), (ins dpmem:$b0),
                    "bclr\t" # i # ",$b0">;
+}
+
+// Selecting them.
+//
+// The shape is a direct-page load, an or/and with a one-bit mask, and a store
+// back to the same address - which is what `PTGD |= PIN2` on a memory-mapped
+// register produces, and what took six bytes of lda/ora/sta before this.
+//
+// dpaddr appears twice in each pattern. TableGen matches the complex pattern
+// once and emits a check that the second occurrence is the same node, so
+// `a = b | 1` written back to a *different* address falls through to
+// lda/ora/sta as it should. The addresses really are the same node in the DAG:
+// SelectionDAG uniques constants, so the literal-address form shares one
+// ConstantSDNode, and the .page0 form is a Wrapper around a tglobaladdr, which
+// is CSE'd like anything else.
+//
+// Two things this deliberately does not do:
+//
+//   It does not fire at -O0. IsLegalToFold refuses to fold anything with a
+//   chain at CodeGenOptLevel::None, so an -O0 build still gets lda/ora/sta.
+//   That is why the SDK's GPIO layer does not advertise these as atomic.
+//
+//   It does not handle a multi-bit mask. `|= 0x05` is two bsets, and choosing
+//   to emit two instructions from one pattern is not something a Pat can do;
+//   it needs the manual selector, and has not been worth it yet.
+class BitSetImm<int n> : ImmLeaf<i8, "return (uint8_t)Imm == " # !shl(1, n) # ";">;
+// The DAG holds an i8 constant sign-extended, so 0xFE arrives through
+// getSExtValue as -2. Comparing as uint8_t is what makes bclr match at all.
+class BitClrImm<int n> : ImmLeaf<i8, "return (uint8_t)Imm == "
+                                    # !and(!xor(!shl(1, n), 255), 255) # ";">;
+
+// The mask is matched but not named: the bit number lives in the opcode, so it
+// is not an operand of the instruction being selected, and a named input the
+// output does not use is a TableGen error rather than a warning.
+foreach i = 0-7 in {
+  def : Pat<(store (or (i8 (load dpaddr:$b0)), (i8 BitSetImm<i>)), dpaddr:$b0),
+            (!cast<Instruction>("BSET"#i) dpmem:$b0)>;
+  def : Pat<(store (and (i8 (load dpaddr:$b0)), (i8 BitClrImm<i>)), dpaddr:$b0),
+            (!cast<Instruction>("BCLR"#i) dpmem:$b0)>;
 }
 
 // brset n,$dd,rr / brclr n,$dd,rr occupy 0x00-0x0F with the same layout.

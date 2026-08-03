@@ -51,6 +51,24 @@ HCS08TargetLowering::HCS08TargetLowering(const TargetMachine &TM,
   }
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
 
+  // No jump tables, and saying so is what stops one being built.
+  //
+  // SelectionDAGBuilder asks areJTsAllowed() before turning a dense switch into
+  // a table, and the default answer is yes if either BR_JT or BRIND is legal.
+  // Neither was declared here, so both defaulted to Legal, a switch with enough
+  // dense cases became a jump table, and instruction selection then had nothing
+  // to select it with - "Cannot select: br_jt", a fatal error rather than bad
+  // code. The first thing to hit it was a printf's conversion switch.
+  //
+  // Expand on both is the right answer rather than a workaround. A jump table
+  // needs an indirect jump, and this machine has none: the only way to reach a
+  // computed address is to push it and rts, which is what the indirect-call
+  // path does at four bytes of outgoing stack per call. A comparison chain is
+  // cheaper than that for any switch small enough to appear on an 8-bit part,
+  // and it is what the target already generates everywhere else.
+  setOperationAction(ISD::BR_JT, MVT::Other, Expand);
+  setOperationAction(ISD::BRIND, MVT::Other, Expand);
+
   // There is no widening load: a narrow value is loaded and then extended.
   for (MVT VT : MVT::integer_valuetypes()) {
     setLoadExtAction(ISD::EXTLOAD, VT, MVT::i1, Promote);
